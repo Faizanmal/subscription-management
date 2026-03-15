@@ -513,22 +513,39 @@ class SecurityDashboardView(APIView):
             ).count(),
             'active_sessions': Session.objects.filter(
                 user__organization=org,
-                is_active=True
+                is_active=True,
+                expires_at__gt=now
             ).count(),
             'failed_logins_24h': LoginAttempt.objects.filter(
                 user__organization=org,
-                success=False,
-                created_at__gte=last_24_hours
+                successful=False,
+                timestamp__gte=last_24_hours
+            ).count(),
+            'recent_login_attempts_24h': LoginAttempt.objects.filter(
+                user__organization=org,
+                timestamp__gte=last_24_hours
             ).count(),
             'api_keys_active': APIKey.objects.filter(
                 organization=org,
                 is_active=True
             ).count(),
             'data_exports_30d': DataAccessLog.objects.filter(
-                user__organization=org,
-                action='export',
-                created_at__gte=last_30_days
-            ).count()
+                organization=org,
+                access_type='export',
+                timestamp__gte=last_30_days
+            ).count(),
+            'suspicious_activities_24h': (
+                LoginAttempt.objects.filter(
+                    user__organization=org,
+                    successful=False,
+                    timestamp__gte=last_24_hours,
+                ).count()
+                + DataAccessLog.objects.filter(
+                    organization=org,
+                    access_type__in=['export', 'download', 'share'],
+                    timestamp__gte=last_24_hours,
+                ).count()
+            ),
         }
         
         # Calculate MFA adoption percentage
@@ -548,7 +565,7 @@ class SecurityDashboardView(APIView):
                 'message': 'Consider requiring MFA for all users'
             })
         
-        if settings.password_min_length < 12:
+        if settings.min_password_length < 12:
             recommendations.append({
                 'type': 'info',
                 'message': 'Consider increasing minimum password length to 12 characters'
@@ -561,7 +578,15 @@ class SecurityDashboardView(APIView):
             })
         
         return Response({
+            # Flat shape used by frontend services.ts
+            'mfa_adoption': stats['mfa_adoption_percent'],
+            'active_sessions': stats['active_sessions'],
+            'recent_login_attempts': stats['recent_login_attempts_24h'],
+            'api_key_count': stats['api_keys_active'],
+            'suspicious_activities': stats['suspicious_activities_24h'],
+
+            # Detailed payload for dashboard expansion
             'stats': stats,
             'settings': SecuritySettingSerializer(settings).data,
-            'recommendations': recommendations
+            'recommendations': recommendations,
         })

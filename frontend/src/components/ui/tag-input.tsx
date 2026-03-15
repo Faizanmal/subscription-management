@@ -11,7 +11,8 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { useTags, useCreateTag } from '@/hooks/use-api';
-import type { Tag } from '@/lib/api';
+// Legacy import removed - use types from '@/types/swm' instead
+// import type { Tag } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface TagInputProps {

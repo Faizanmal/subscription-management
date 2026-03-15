@@ -80,6 +80,7 @@ export default function AnalyticsPage() {
   const [redundancies, setRedundancies] = useState<RedundancyGroup[]>([]);
   const [costHistory, setCostHistory] = useState<CostRecord[]>([]);
   const [usageData, setUsageData] = useState<UsageMetrics[]>([]);
+  const [departmentData, setDepartmentData] = useState<{ name: string; spend: number; subscriptions: number }[]>([]);
   const [dateRange, setDateRange] = useState('30d');
   const [isLoading, setIsLoading] = useState(true);
 
@@ -87,14 +88,22 @@ export default function AnalyticsPage() {
     setIsLoading(true);
     try {
       await fetchDashboardStats();
-      const [redundancyData, costsData, usageStats] = await Promise.all([
+      const [redundancyData, costsData, usageStats, spendSummary] = await Promise.all([
         redundancyApi.list(),
         costsApi.list(),
         usageApi.list(),
+        costsApi.getSummary(),
       ]);
       setRedundancies(Array.isArray(redundancyData) ? redundancyData : redundancyData.results || []);
       setCostHistory(Array.isArray(costsData) ? costsData : costsData.results || []);
       setUsageData(Array.isArray(usageStats) ? usageStats : usageStats.results || []);
+      setDepartmentData(
+        (spendSummary.by_department || []).map((dept) => ({
+          name: dept.department,
+          spend: Number(dept.spend || 0),
+          subscriptions: Number(dept.subscription_count || 0),
+        }))
+      );
     } catch (err) {
       console.error('Failed to load analytics data', err);
     } finally {
@@ -135,16 +144,6 @@ export default function AnalyticsPage() {
     activeUsers: u.active_users,
     totalUsers: u.total_users,
   }));
-
-  // Department breakdown mock data
-  const departmentData = [
-    { name: 'Engineering', spend: 45000, subscriptions: 25 },
-    { name: 'Marketing', spend: 18000, subscriptions: 12 },
-    { name: 'Sales', spend: 22000, subscriptions: 15 },
-    { name: 'HR', spend: 8000, subscriptions: 8 },
-    { name: 'Finance', spend: 12000, subscriptions: 10 },
-    { name: 'Other', spend: 5000, subscriptions: 5 },
-  ];
 
   const handleExport = () => {
     // Export analytics data

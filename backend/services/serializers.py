@@ -8,7 +8,8 @@ from services.models import (
     UsageEvent, UsageMetrics, CostRecord,
     RedundancyGroup, RedundancyGroupMember,
     Recommendation, Alert, Workflow, WorkflowStep,
-    SavingsReport, BudgetTarget
+    SavingsReport, BudgetTarget,
+    AutomationWorkflow, WorkflowExecution,
 )
 
 
@@ -370,18 +371,18 @@ class BudgetTargetSerializer(serializers.ModelSerializer):
 
 class DashboardSummarySerializer(serializers.Serializer):
     """Dashboard summary data"""
-    
+    # Field names match the frontend DashboardStats type
     total_subscriptions = serializers.IntegerField()
     active_subscriptions = serializers.IntegerField()
-    total_monthly_spend = serializers.DecimalField(max_digits=14, decimal_places=2)
-    total_annual_spend = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_monthly_cost = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_annual_cost = serializers.DecimalField(max_digits=14, decimal_places=2)
     total_licenses = serializers.IntegerField()
     used_licenses = serializers.IntegerField()
     unused_licenses = serializers.IntegerField()
-    overall_utilization = serializers.FloatField()
+    avg_utilization = serializers.FloatField()
     potential_savings = serializers.DecimalField(max_digits=14, decimal_places=2)
-    pending_renewals = serializers.IntegerField()
-    active_recommendations = serializers.IntegerField()
+    upcoming_renewals = serializers.IntegerField()
+    pending_recommendations = serializers.IntegerField()
     pending_workflows = serializers.IntegerField()
     unread_alerts = serializers.IntegerField()
     currency = serializers.CharField()
@@ -415,3 +416,43 @@ class TopSpendingSubscriptionSerializer(serializers.Serializer):
     annual_cost = serializers.DecimalField(max_digits=12, decimal_places=2)
     utilization_rate = serializers.FloatField()
     department = serializers.CharField()
+
+
+class AutomationWorkflowSerializer(serializers.ModelSerializer):
+    """Serializer for automation workflows"""
+    created_by_name = serializers.SerializerMethodField()
+    trigger_type = serializers.CharField(source='trigger')
+
+    class Meta:
+        model = AutomationWorkflow
+        fields = [
+            'id', 'organization_id', 'name', 'description',
+            'trigger', 'trigger_type', 'trigger_config', 'conditions',
+            'action', 'action_config',
+            'is_active', 'last_run_at', 'run_count',
+            'created_by', 'created_by_name',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'organization_id', 'last_run_at', 'run_count', 'created_at', 'updated_at']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip() or obj.created_by.email
+        return None
+
+
+class WorkflowExecutionSerializer(serializers.ModelSerializer):
+    """Serializer for workflow execution logs"""
+    workflow_id = serializers.UUIDField(source='workflow.id', read_only=True)
+    workflow_name = serializers.CharField(source='workflow.name', read_only=True)
+
+    class Meta:
+        model = WorkflowExecution
+        fields = [
+            'id', 'workflow_id', 'workflow_name',
+            'status', 'trigger_reason',
+            'steps_completed', 'total_steps',
+            'error_message', 'output_data',
+            'started_at', 'completed_at', 'created_at',
+        ]
+        read_only_fields = ['id', 'workflow_id', 'workflow_name', 'started_at', 'created_at']

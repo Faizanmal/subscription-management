@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { formsApi, submissionsApi } from "@/lib/api-client";
+// DEPRECATED: formforge API client was removed. Forms feature needs migration to /api/v1 endpoints.
+// import { formsApi, submissionsApi } from "@/lib/api-client";
 import type { Form, Submission, Analytics } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

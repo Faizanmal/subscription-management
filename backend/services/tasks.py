@@ -245,14 +245,20 @@ def calculate_overlap_score(sub1, sub2):
 
 
 @shared_task
-def generate_ai_recommendations():
+def generate_ai_recommendations(organization_id=None):
     """Generate AI-powered recommendations"""
     from services.models import Subscription, Recommendation
     from users.models import Organization
-    
-    client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-    
-    for org in Organization.objects.all():
+
+    client = None
+    if getattr(settings, 'OPENAI_API_KEY', None):
+        client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+
+    org_queryset = Organization.objects.all()
+    if organization_id:
+        org_queryset = org_queryset.filter(id=organization_id)
+
+    for org in org_queryset:
         subscriptions = Subscription.objects.filter(
             organization=org,
             status='active'
@@ -260,17 +266,21 @@ def generate_ai_recommendations():
         
         for subscription in subscriptions:
             try:
-                recommendation = analyze_subscription_with_ai(client, subscription)
+                if client is not None:
+                    recommendation = analyze_subscription_with_ai(client, subscription)
+                else:
+                    recommendation = None
                 
                 if recommendation:
                     Recommendation.objects.create(
+                        organization=org,
                         subscription=subscription,
                         type=recommendation['type'],
                         title=recommendation['title'],
                         description=recommendation['description'],
                         estimated_savings=recommendation.get('savings', 0),
                         priority=recommendation.get('priority', 'medium'),
-                        ai_confidence=recommendation.get('confidence', 0.8)
+                        confidence_score=float(recommendation.get('confidence', 0.8)) * 100,
                     )
                     
             except Exception as e:
@@ -619,3 +629,113 @@ def sync_vendor_catalog():
         )
     
     logger.info(f"Synced {len(vendors)} vendors")
+
+
+@shared_task(bind=True, max_retries=3)
+def execute_automation_workflow(self, workflow_id, execution_id=None):
+    """Execute an automation workflow and persist execution result."""
+    from services.models import AutomationWorkflow, WorkflowExecution
+
+    try:
+        workflow = AutomationWorkflow.objects.get(id=workflow_id)
+        if execution_id:
+            execution = WorkflowExecution.objects.get(id=execution_id, workflow=workflow)
+        else:
+            execution = WorkflowExecution.objects.create(
+                workflow=workflow,
+                status=WorkflowExecution.Status.RUNNING,
+                trigger_reason='system',
+                total_steps=1,
+            )
+
+        output = {
+            'action': workflow.action,
+            'action_config': workflow.action_config,
+            'trigger': workflow.trigger,
+            'trigger_config': workflow.trigger_config,
+        }
+
+        # Placeholder execution engine: persist config and mark successful.
+        execution.steps_completed = execution.total_steps
+        execution.status = WorkflowExecution.Status.COMPLETED
+        execution.output_data = output
+        execution.completed_at = timezone.now()
+        execution.save(update_fields=[
+            'steps_completed', 'status', 'output_data', 'completed_at'
+        ])
+
+        workflow.last_run_at = timezone.now()
+        workflow.run_count += 1
+        workflow.save(update_fields=['last_run_at', 'run_count', 'updated_at'])
+
+        return {'execution_id': str(execution.id), 'status': execution.status}
+    except Exception as e:
+        logger.error(f"Failed to execute automation workflow {workflow_id}: {e}")
+        if execution_id:
+            from services.models import WorkflowExecution
+            WorkflowExecution.objects.filter(id=execution_id).update(
+                status=WorkflowExecution.Status.FAILED,
+                error_message=str(e),
+                completed_at=timezone.now(),
+            )
+        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+
+
+@shared_task(bind=True, max_retries=2)
+def generate_savings_report_task(self, organization_id, period='monthly', generated_by_id=None):
+    """Generate a savings report for an organization."""
+    from services.models import SavingsReport, Recommendation, Subscription
+    from users.models import User
+
+    try:
+        now = timezone.now().date()
+        if period == 'annual':
+            period_start = now.replace(month=1, day=1)
+        elif period == 'quarterly':
+            start_month = ((now.month - 1) // 3) * 3 + 1
+            period_start = now.replace(month=start_month, day=1)
+        else:
+            period_start = now.replace(day=1)
+        period_end = now
+
+        subscriptions = Subscription.objects.filter(organization_id=organization_id, status='active')
+        recs = Recommendation.objects.filter(organization_id=organization_id)
+
+        total_spend = subscriptions.aggregate(total=Sum('monthly_cost'))['total'] or 0
+        implemented = recs.filter(status='completed').aggregate(total=Sum('estimated_savings'))['total'] or 0
+        potential = recs.filter(status='pending').aggregate(total=Sum('estimated_savings'))['total'] or 0
+
+        generated_by = None
+        if generated_by_id:
+            generated_by = User.objects.filter(id=generated_by_id).first()
+
+        report, _ = SavingsReport.objects.update_or_create(
+            organization_id=organization_id,
+            period=period,
+            period_start=period_start,
+            defaults={
+                'period_end': period_end,
+                'total_spend': total_spend,
+                'optimized_spend': max(total_spend - implemented, 0),
+                'total_savings': implemented,
+                'savings_by_type': list(
+                    recs.filter(status='completed').values('type').annotate(total=Sum('estimated_savings'))
+                ),
+                'savings_by_department': {},
+                'savings_by_action': {},
+                'subscriptions_analyzed': subscriptions.count(),
+                'recommendations_generated': recs.count(),
+                'recommendations_implemented': recs.filter(status='completed').count(),
+                'generated_by': generated_by,
+            },
+        )
+
+        return {
+            'report_id': str(report.id),
+            'total_spend': float(total_spend),
+            'implemented_savings': float(implemented),
+            'potential_savings': float(potential),
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate savings report for organization {organization_id}: {e}")
+        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))

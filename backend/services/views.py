@@ -16,7 +16,7 @@ from services.models import (
     SoftwareVendor, Subscription, SubscriptionUser,
     UsageEvent, UsageMetrics, CostRecord,
     RedundancyGroup, Recommendation, Alert, Workflow, WorkflowStep,
-    SavingsReport, BudgetTarget
+    SavingsReport, BudgetTarget, AutomationWorkflow, WorkflowExecution
 )
 from services.serializers import (
     SoftwareVendorSerializer,
@@ -28,7 +28,8 @@ from services.serializers import (
     AlertSerializer, AlertActionSerializer,
     WorkflowSerializer, WorkflowCreateSerializer, WorkflowActionSerializer,
     SavingsReportSerializer, BudgetTargetSerializer,
-    DashboardSummarySerializer
+    DashboardSummarySerializer, AutomationWorkflowSerializer,
+    WorkflowExecutionSerializer
 )
 from api.permissions import IsFinance, IsOrgMember
 
@@ -379,6 +380,147 @@ class RecommendationViewSet(viewsets.ModelViewSet):
         }
         return mapping.get(rec_type, 'license_change')
 
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        recommendation = self.get_object()
+        recommendation.status = 'approved'
+        recommendation.reviewed_by = request.user
+        recommendation.reviewed_at = timezone.now()
+        recommendation.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+
+        if recommendation.type in ['cancel', 'downgrade', 'remove_licenses', 'consolidate']:
+            Workflow.objects.create(
+                organization=request.user.organization,
+                subscription=recommendation.subscription,
+                recommendation=recommendation,
+                workflow_type=self._get_workflow_type(recommendation.type),
+                title=recommendation.title,
+                description=recommendation.description,
+                request_data={'recommendation_id': str(recommendation.id)},
+                requested_by=request.user,
+                status='pending'
+            )
+
+        return Response(self.get_serializer(recommendation).data)
+
+    @action(detail=True, methods=['post'])
+    def dismiss(self, request, pk=None):
+        recommendation = self.get_object()
+        reason = request.data.get('reason', '')
+
+        recommendation.status = 'rejected'
+        recommendation.reviewed_by = request.user
+        recommendation.reviewed_at = timezone.now()
+        recommendation.review_notes = reason
+        recommendation.save(update_fields=[
+            'status', 'reviewed_by', 'reviewed_at', 'review_notes', 'updated_at'
+        ])
+
+        return Response(self.get_serializer(recommendation).data)
+
+    @action(detail=True, methods=['post'])
+    def implement(self, request, pk=None):
+        recommendation = self.get_object()
+        recommendation.status = 'completed'
+        recommendation.reviewed_by = request.user
+        recommendation.reviewed_at = timezone.now()
+        recommendation.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+        return Response(self.get_serializer(recommendation).data)
+
+    @action(detail=False, methods=['get'], url_path='quick-wins')
+    def quick_wins(self, request):
+        limit = int(request.query_params.get('limit', 5))
+        queryset = self.get_queryset().filter(status='pending').order_by('-estimated_savings')[:limit]
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='savings-summary')
+    def savings_summary(self, request):
+        qs = self.get_queryset()
+
+        total_potential = qs.filter(status='pending').aggregate(total=Sum('estimated_savings'))['total'] or 0
+        implemented = qs.filter(status='implemented').aggregate(total=Sum('estimated_savings'))['total'] or 0
+        by_type = qs.filter(status='pending').values('type').annotate(
+            count=Count('id'),
+            savings=Sum('estimated_savings')
+        ).order_by('-savings')
+
+        return Response({
+            'total_potential': total_potential,
+            'implemented': implemented,
+            'by_type': list(by_type),
+        })
+
+    @action(detail=False, methods=['post'])
+    def generate(self, request):
+        from services.tasks import generate_ai_recommendations
+
+        task = generate_ai_recommendations.delay(str(request.user.organization.id))
+        return Response({'task_id': task.id, 'message': 'Recommendation generation started'})
+
+
+class AutomationWorkflowViewSet(viewsets.ModelViewSet):
+    """Automation workflow viewset"""
+    serializer_class = AutomationWorkflowSerializer
+    permission_classes = [IsAuthenticated, IsOrgMember]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_active', 'trigger', 'action']
+    search_fields = ['name', 'description']
+    ordering_fields = ['created_at', 'updated_at', 'last_run_at', 'run_count']
+
+    def get_queryset(self):
+        return AutomationWorkflow.objects.filter(
+            organization=self.request.user.organization
+        ).select_related('created_by')
+
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=self.request.user.organization,
+            created_by=self.request.user,
+        )
+
+    @action(detail=True, methods=['post'])
+    def toggle(self, request, pk=None):
+        workflow = self.get_object()
+        workflow.is_active = not workflow.is_active
+        workflow.save(update_fields=['is_active', 'updated_at'])
+        return Response(self.get_serializer(workflow).data)
+
+    @action(detail=True, methods=['post'])
+    def run(self, request, pk=None):
+        from services.tasks import execute_automation_workflow
+
+        workflow = self.get_object()
+        execution = WorkflowExecution.objects.create(
+            workflow=workflow,
+            status=WorkflowExecution.Status.RUNNING,
+            trigger_reason='manual',
+            total_steps=1,
+        )
+        execute_automation_workflow.delay(str(workflow.id), str(execution.id))
+        return Response(WorkflowExecutionSerializer(execution).data, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['get'])
+    def executions(self, request, pk=None):
+        workflow = self.get_object()
+        executions = workflow.executions.order_by('-started_at')
+        serializer = WorkflowExecutionSerializer(executions, many=True)
+        return Response(serializer.data)
+
+
+class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
+    """Workflow execution history viewset"""
+    serializer_class = WorkflowExecutionSerializer
+    permission_classes = [IsAuthenticated, IsOrgMember]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['status', 'workflow']
+    ordering_fields = ['started_at', 'completed_at', 'created_at']
+
+    def get_queryset(self):
+        return WorkflowExecution.objects.filter(
+            workflow__organization=self.request.user.organization
+        ).select_related('workflow')
+
 
 class AlertViewSet(viewsets.ModelViewSet):
     """Alert viewset"""
@@ -677,17 +819,17 @@ class DashboardView(generics.GenericAPIView):
         data = {
             'total_subscriptions': subscriptions.count(),
             'active_subscriptions': active_subs.count(),
-            'total_monthly_spend': total_monthly,
-            'total_annual_spend': total_monthly * 12,
+            'total_monthly_cost': total_monthly,
+            'total_annual_cost': total_monthly * 12,
             'total_licenses': total_licenses,
             'used_licenses': used_licenses,
             'unused_licenses': total_licenses - used_licenses,
-            'overall_utilization': round(
+            'avg_utilization': round(
                 (used_licenses / total_licenses * 100) if total_licenses > 0 else 0, 2
             ),
             'potential_savings': potential_savings,
-            'pending_renewals': pending_renewals,
-            'active_recommendations': active_recommendations,
+            'upcoming_renewals': pending_renewals,
+            'pending_recommendations': active_recommendations,
             'pending_workflows': pending_workflows,
             'unread_alerts': unread_alerts,
             'currency': org.default_currency,

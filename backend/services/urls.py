@@ -10,6 +10,7 @@ from services.views import (
     UsageEventViewSet, UsageMetricsViewSet, CostRecordViewSet,
     RedundancyGroupViewSet, RecommendationViewSet,
     AlertViewSet, WorkflowViewSet,
+    AutomationWorkflowViewSet, WorkflowExecutionViewSet,
     SavingsReportViewSet, BudgetTargetViewSet,
     DashboardView, SpendAnalyticsView, SpendTrendView
 )
@@ -23,7 +24,9 @@ router.register(r'cost-records', CostRecordViewSet, basename='cost-record')
 router.register(r'redundancies', RedundancyGroupViewSet, basename='redundancy')
 router.register(r'recommendations', RecommendationViewSet, basename='recommendation')
 router.register(r'alerts', AlertViewSet, basename='alert')
-router.register(r'workflows', WorkflowViewSet, basename='workflow')
+router.register(r'approval-workflows', WorkflowViewSet, basename='approval-workflow')
+router.register(r'workflows', AutomationWorkflowViewSet, basename='workflow')
+router.register(r'workflow-executions', WorkflowExecutionViewSet, basename='workflow-execution')
 router.register(r'savings-reports', SavingsReportViewSet, basename='savings-report')
 router.register(r'budgets', BudgetTargetViewSet, basename='budget')
 

@@ -12,10 +12,13 @@ urlpatterns = [
     # Admin
     path('admin/', admin.site.urls),
     
-    # API v1
-    path('api/v1/', include('api.urls')),
+    # API v1 - Main services endpoints
+    path('api/v1/', include('services.urls')),
+    path('api/v1/integrations/', include('integrations.urls')),
+    path('api/v1/security/', include('security.urls')),
+    path('api/v1/backups/', include('backups.urls')),
     
-    # Authentication
+    # Authentication & Users
     path('api/v1/auth/', include('users.urls')),
     
     # Social Auth
