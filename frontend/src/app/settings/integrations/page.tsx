@@ -82,7 +82,6 @@ export default function IntegrationsPage() {
       setSSOConnections(Array.isArray(sso) ? sso : sso.results || []);
       setWebhooks(Array.isArray(hooks) ? hooks : hooks.results || []);
     } catch (error) {
-      console.error('Failed to load integration data', error);
     }
   };
 
@@ -99,7 +98,6 @@ export default function IntegrationsPage() {
         setSSOConnections(Array.isArray(sso) ? sso : sso.results || []);
         setWebhooks(Array.isArray(hooks) ? hooks : hooks.results || []);
       } catch (error) {
-        console.error('Failed to load integration data', error);
       }
     };
     load();
@@ -150,7 +148,6 @@ export default function IntegrationsPage() {
       setWebhookForm({ url: '', events: [] });
       toast.success('Webhook created');
     } catch (error) {
-      console.error('Failed to create webhook', error);
       toast.error('Failed to create webhook');
     }
   };
@@ -161,7 +158,6 @@ export default function IntegrationsPage() {
       setWebhooks(webhooks.filter((w) => w.id !== id));
       toast.success('Webhook deleted');
     } catch (error) {
-      console.error('Failed to delete webhook', error);
       toast.error('Failed to delete webhook');
     }
   };
@@ -610,7 +606,6 @@ export default function IntegrationsPage() {
                                   )
                                 );
                               } catch (error) {
-                                console.error('Failed to update webhook', error);
                                 toast.error('Failed to update webhook');
                               }
                             }}

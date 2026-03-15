@@ -62,11 +62,7 @@ export default function AlertsPage() {
     category: '',
   });
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  async function loadData() {
     setIsLoading(true);
     try {
       const [renewals, budgets] = await Promise.all([
@@ -80,7 +76,14 @@ export default function AlertsPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const handleAcknowledge = async (id: string) => {
     try {

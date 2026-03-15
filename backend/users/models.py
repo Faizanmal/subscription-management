@@ -7,6 +7,7 @@ import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.utils import timezone
+from django.utils.timezone import now as _timezone_now
 
 
 class UserManager(BaseUserManager):
@@ -184,7 +185,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_verified = models.BooleanField(default=False)
     
     # Preferences
-    user_timezone = models.CharField(max_length=50, default='UTC')
+    timezone = models.CharField(max_length=50, default='UTC')
     language = models.CharField(max_length=10, default='en')
     notification_preferences = models.JSONField(default=dict, blank=True)
     
@@ -193,7 +194,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_activity = models.DateTimeField(blank=True, null=True)
     
     # Timestamps
-    date_joined = models.DateTimeField(default=timezone.now)
+    date_joined = models.DateTimeField(default=_timezone_now)
     updated_at = models.DateTimeField(auto_now=True)
     
     objects = UserManager()

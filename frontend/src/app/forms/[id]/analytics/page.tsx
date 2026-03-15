@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { formsApi, submissionsApi } from "@/lib/api-client";
+import { formsApi, submissionsApi } from "@/lib/formforge-services";
 import type { Form, Submission, Analytics } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,7 +39,10 @@ export default function FormAnalyticsPage() {
   }, [formId]);
 
   useEffect(() => {
-    loadData();
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadData]);
 
   // Prepare chart data - submissions by day (last 30 days)

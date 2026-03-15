@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { formsApi, integrationsApi } from "@/lib/api-client";
+import { formsApi } from "@/lib/formforge-services";
+import { api } from "@/lib/api-base";
+import { integrationsApi } from "@/lib/services";
 import type { Form, Integration } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,22 +38,23 @@ export default function FormIntegrationsPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [formData, integrationsData] = await Promise.all([
+      const [formData, integrationsDataRaw] = await Promise.all([
         formsApi.get(formId),
-        integrationsApi.list(formId),
+        integrationsApi.list(),
       ]);
+      const integrationsData = integrationsDataRaw as unknown as Integration[];
       setForm(formData);
       setIntegrations(integrationsData);
 
       // Load existing integrations into state
-      const webhook = integrationsData.find(i => i.type === "webhook");
+      const webhook = integrationsData.find((i: Integration) => i.type === "webhook");
       if (webhook) {
         const config = webhook.config_json as { url?: string; secret?: string };
         setWebhookUrl(config.url || "");
         setWebhookSecret(config.secret || "");
-        
+
         // Load webhook logs
-        const logs = await integrationsApi.getWebhookLogs(webhook.id);
+        const logs = await api.get<unknown>(`/integrations/webhooks/${webhook.id}/logs/`);
         type WebhookLog = { id: string; created_at: string; status: string; response_code?: number };
         let typedLogs: WebhookLog[] = [];
         if (Array.isArray(logs)) {
@@ -62,7 +65,7 @@ export default function FormIntegrationsPage() {
         setWebhookLogs(typedLogs.slice(0, 10));  // Get last 10
       }
 
-      const email = integrationsData.find(i => i.type === "email");
+      const email = integrationsData.find((i: Integration) => i.type === "email");
       if (email) {
         setEmailEnabled(email.status === 'active');
         const config = email.config_json as { recipients?: string[] };
@@ -76,7 +79,10 @@ export default function FormIntegrationsPage() {
   }, [formId]);
 
   useEffect(() => {
-    loadData();
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadData]);
 
   const saveWebhook = async () => {
@@ -86,20 +92,20 @@ export default function FormIntegrationsPage() {
     }
 
     try {
-      const existing = integrations.find(i => i.type === "webhook");
+      const existing = integrations.find((i: Integration) => i.type === "webhook");
       
       if (existing) {
         await integrationsApi.update(existing.id, {
           config_json: { url: webhookUrl, secret: webhookSecret },
           status: 'active',
-        });
+        } as unknown as Record<string, unknown>);
       } else {
         await integrationsApi.create({
           form: formId,
           integration_type: "webhook",
           config: { url: webhookUrl, secret: webhookSecret },
           is_active: true,
-        });
+        } as unknown as Record<string, unknown>);
       }
 
       toast.success("Webhook integration saved");
@@ -118,20 +124,20 @@ export default function FormIntegrationsPage() {
     }
 
     try {
-      const existing = integrations.find(i => i.type === "email");
+      const existing = integrations.find((i: Integration) => i.type === "email");
 
       if (existing) {
         await integrationsApi.update(existing.id, {
           config_json: { recipients },
           status: emailEnabled ? 'active' : 'inactive',
-        });
+        } as unknown as Record<string, unknown>);
       } else {
         await integrationsApi.create({
           form: formId,
           integration_type: "email",
           config: { recipients },
           is_active: emailEnabled,
-        });
+        } as unknown as Record<string, unknown>);
       }
 
       toast.success("Email integration saved");
@@ -154,7 +160,7 @@ export default function FormIntegrationsPage() {
   };
 
   const testWebhook = async () => {
-    const webhook = integrations.find(i => i.type === "webhook");
+    const webhook = integrations.find((i: Integration) => i.type === "webhook");
     if (!webhook) {
       toast.error("Save webhook configuration first");
       return;
@@ -196,7 +202,7 @@ is_valid = verify_webhook(
     setConnectingSheets(true);
     try {
       // Get authorization URL from backend
-      const response = await integrationsApi.initiateGoogleOAuth(formId);
+      const response = await api.get<{ authorization_url: string }>(`/integrations/oauth/google/?form_id=${formId}`);
       
       // Open OAuth popup
       const width = 600;
@@ -217,7 +223,7 @@ is_valid = verify_webhook(
           popup?.close();
           
           // Complete the OAuth flow
-          await integrationsApi.completeGoogleOAuth({
+          await api.post('/integrations/oauth/google/callback/', {
             code: event.data.code,
             state: event.data.state,
             form_id: formId
@@ -405,7 +411,7 @@ is_valid = verify_webhook(
                               size="sm"
                               onClick={async () => {
                                 try {
-                                  await integrationsApi.retryWebhook(log.id);
+                                  await api.post(`/integrations/webhooks/logs/${log.id}/retry/`);
                                   toast.success("Webhook retry queued");
                                   loadData();
                                 } catch {

@@ -29,7 +29,6 @@ apiClient.interceptors.request.use(
             config.headers.Authorization = `Bearer ${token}`;
           }
         } catch (error) {
-          console.error('Failed to parse auth storage:', error);
         }
       }
     }
@@ -47,7 +46,6 @@ apiClient.interceptors.response.use(
     // Handle rate limiting
     if (error.response?.status === 429) {
       const retryAfter = (error.response.data as Record<string, unknown>)?.retry_after || 60;
-      console.warn(`Rate limit exceeded. Retry after ${retryAfter} seconds.`);
       return Promise.reject({
         ...error,
         isRateLimit: true,

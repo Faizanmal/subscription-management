@@ -727,3 +727,97 @@ class BudgetTarget(models.Model):
     class Meta:
         db_table = 'budget_targets'
         ordering = ['-effective_from']
+
+
+class AutomationWorkflow(models.Model):
+    """Automation workflows with triggers and actions"""
+
+    class Trigger(models.TextChoices):
+        RENEWAL_APPROACHING = 'renewal_approaching', 'Renewal Approaching'
+        LOW_USAGE = 'low_usage', 'Low Usage'
+        BUDGET_EXCEEDED = 'budget_exceeded', 'Budget Exceeded'
+        NEW_SUBSCRIPTION = 'new_subscription', 'New Subscription'
+        RECOMMENDATION_CREATED = 'recommendation_created', 'Recommendation Created'
+        SCHEDULED = 'scheduled', 'Scheduled'
+        THRESHOLD = 'threshold', 'Threshold'
+
+    class Action(models.TextChoices):
+        SEND_EMAIL = 'send_email', 'Send Email'
+        SEND_SLACK = 'send_slack', 'Send Slack'
+        CREATE_TASK = 'create_task', 'Create Task'
+        UPDATE_SUBSCRIPTION = 'update_subscription', 'Update Subscription'
+        CREATE_APPROVAL = 'create_approval', 'Create Approval'
+        WEBHOOK = 'webhook', 'Webhook'
+        NOTIFY = 'notify', 'Notify'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name='automation_workflows'
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+
+    trigger = models.CharField(max_length=40, choices=Trigger.choices)
+    trigger_config = models.JSONField(default=dict, blank=True)
+    conditions = models.JSONField(default=dict, blank=True)
+    action = models.CharField(max_length=40, choices=Action.choices)
+    action_config = models.JSONField(default=dict, blank=True)
+
+    is_active = models.BooleanField(default=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    run_count = models.IntegerField(default=0)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_automation_workflows'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'automation_workflows'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['organization', 'is_active']),
+            models.Index(fields=['organization', 'trigger']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.trigger} → {self.action})"
+
+
+class WorkflowExecution(models.Model):
+    """Execution log for automation workflows"""
+
+    class Status(models.TextChoices):
+        RUNNING = 'running', 'Running'
+        COMPLETED = 'completed', 'Completed'
+        FAILED = 'failed', 'Failed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workflow = models.ForeignKey(
+        AutomationWorkflow, on_delete=models.CASCADE, related_name='executions'
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.RUNNING)
+    trigger_reason = models.CharField(max_length=500, blank=True)
+    steps_completed = models.IntegerField(default=0)
+    total_steps = models.IntegerField(default=1)
+    error_message = models.TextField(blank=True)
+    output_data = models.JSONField(default=dict, blank=True)
+
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'workflow_executions'
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['workflow', 'status']),
+            models.Index(fields=['workflow', 'started_at']),
+        ]
+
+    def __str__(self):
+        return f"Execution {self.id} of {self.workflow.name} ({self.status})"

@@ -122,15 +122,18 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (user) {
-      setProfileForm({
-        first_name: user.first_name || '',
-        last_name: user.last_name || '',
-        email: user.email || '',
-        phone: user.phone || '',
-        job_title: user.job_title || '',
-        timezone: user.timezone || 'UTC',
-      });
-      setIsLoading(false);
+      const timer = window.setTimeout(() => {
+        setProfileForm({
+          first_name: user.first_name || '',
+          last_name: user.last_name || '',
+          email: user.email || '',
+          phone: user.phone || '',
+          job_title: user.job_title || '',
+          timezone: user.timezone || 'UTC',
+        });
+        setIsLoading(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [user]);
 

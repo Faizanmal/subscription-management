@@ -12,6 +12,73 @@ import requests
 logger = logging.getLogger('swm')
 
 
+def _backoff_seconds(retries):
+    """Exponential backoff capped at 1 hour."""
+    return min(3600, 60 * (2 ** retries))
+
+
+def _refresh_google_access_token(integration, credentials):
+    refresh_token = credentials.get('refresh_token')
+    client_id = credentials.get('client_id') or getattr(settings, 'GOOGLE_CLIENT_ID', None)
+    client_secret = credentials.get('client_secret') or getattr(settings, 'GOOGLE_CLIENT_SECRET', None)
+
+    if not refresh_token or not client_id or not client_secret:
+        return credentials.get('access_token')
+
+    response = requests.post(
+        'https://oauth2.googleapis.com/token',
+        data={
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id': client_id,
+            'client_secret': client_secret,
+        },
+        timeout=15,
+    )
+    if response.status_code != 200:
+        raise ValueError(f"Failed to refresh Google token: {response.status_code}")
+
+    payload = response.json()
+    credentials['access_token'] = payload.get('access_token')
+    if payload.get('expires_in'):
+        credentials['expires_in'] = payload['expires_in']
+    integration.credentials = credentials
+    integration.save(update_fields=['credentials', 'updated_at'])
+    return credentials.get('access_token')
+
+
+def _refresh_microsoft_access_token(integration, credentials):
+    refresh_token = credentials.get('refresh_token')
+    tenant_id = credentials.get('tenant_id') or getattr(settings, 'MICROSOFT_TENANT_ID', 'common')
+    client_id = credentials.get('client_id') or getattr(settings, 'MICROSOFT_CLIENT_ID', None)
+    client_secret = credentials.get('client_secret') or getattr(settings, 'MICROSOFT_CLIENT_SECRET', None)
+
+    if not refresh_token or not client_id or not client_secret:
+        return credentials.get('access_token')
+
+    response = requests.post(
+        f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+        data={
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scope': 'https://graph.microsoft.com/.default',
+        },
+        timeout=15,
+    )
+    if response.status_code != 200:
+        raise ValueError(f"Failed to refresh Microsoft token: {response.status_code}")
+
+    payload = response.json()
+    credentials['access_token'] = payload.get('access_token')
+    if payload.get('expires_in'):
+        credentials['expires_in'] = payload['expires_in']
+    integration.credentials = credentials
+    integration.save(update_fields=['credentials', 'updated_at'])
+    return credentials.get('access_token')
+
+
 @shared_task(bind=True, max_retries=3)
 def sync_integration(self, integration_id, sync_id=None):
     """Sync data from an integration"""
@@ -75,7 +142,7 @@ def sync_integration(self, integration_id, sync_id=None):
         logger.error(f"Integration {integration_id} not found")
     except Exception as e:
         logger.error(f"Sync failed: {e}")
-        self.retry(countdown=300)
+        self.retry(countdown=_backoff_seconds(self.request.retries))
 
 
 @shared_task(bind=True, max_retries=3)
@@ -110,16 +177,14 @@ def sync_google_workspace(integration):
     """Sync Google Workspace users and apps"""
     from services.models import Subscription, SoftwareVendor
     
-    credentials = integration.credentials_encrypted or {}
+    credentials = integration.credentials or {}
     access_token = credentials.get('access_token')
     
     if not access_token:
         raise ValueError("No access token available")
     
-    # Refresh token if needed
-    if credentials.get('expires_in'):
-        # TODO: Implement token refresh
-        pass
+    if credentials.get('refresh_token'):
+        access_token = _refresh_google_access_token(integration, credentials)
     
     # Get users from Google Admin API
     headers = {'Authorization': f'Bearer {access_token}'}
@@ -127,7 +192,8 @@ def sync_google_workspace(integration):
     response = requests.get(
         'https://admin.googleapis.com/admin/directory/v1/users',
         headers=headers,
-        params={'customer': 'my_customer', 'maxResults': 500}
+        params={'customer': 'my_customer', 'maxResults': 500},
+        timeout=30,
     )
     
     if response.status_code == 200:
@@ -166,11 +232,14 @@ def sync_microsoft_365(integration):
     """Sync Microsoft 365 users and apps"""
     from services.models import Subscription, SoftwareVendor
     
-    credentials = integration.credentials_encrypted or {}
+    credentials = integration.credentials or {}
     access_token = credentials.get('access_token')
     
     if not access_token:
         raise ValueError("No access token available")
+
+    if credentials.get('refresh_token'):
+        access_token = _refresh_microsoft_access_token(integration, credentials)
     
     headers = {'Authorization': f'Bearer {access_token}'}
     
@@ -178,7 +247,8 @@ def sync_microsoft_365(integration):
     response = requests.get(
         'https://graph.microsoft.com/v1.0/users',
         headers=headers,
-        params={'$top': 999}
+        params={'$top': 999},
+        timeout=30,
     )
     
     if response.status_code == 200:
@@ -238,7 +308,7 @@ def sync_plaid_accounts(self, integration_id):
         api_client = plaid.ApiClient(configuration)
         client = plaid_api.PlaidApi(api_client)
         
-        credentials = integration.credentials_encrypted or {}
+        credentials = integration.credentials or {}
         access_token = credentials.get('access_token')
         
         if not access_token:
@@ -250,18 +320,15 @@ def sync_plaid_accounts(self, integration_id):
         
         for account_data in accounts_response['accounts']:
             account, _ = BankAccount.objects.update_or_create(
+                organization=integration.organization,
                 integration=integration,
                 plaid_account_id=account_data['account_id'],
                 defaults={
-                    'institution_id': account_data.get('institution_id'),
+                    'institution_name': account_data.get('institution_name', ''),
                     'name': account_data['name'],
-                    'official_name': account_data.get('official_name'),
-                    'type': account_data['type'],
-                    'subtype': account_data.get('subtype'),
+                    'account_type': account_data.get('subtype') or account_data['type'],
                     'mask': account_data.get('mask'),
-                    'current_balance': account_data['balances'].get('current'),
-                    'available_balance': account_data['balances'].get('available'),
-                    'iso_currency_code': account_data['balances'].get('iso_currency_code', 'USD'),
+                    'plaid_item_id': credentials.get('item_id'),
                     'is_active': True
                 }
             )
@@ -298,18 +365,18 @@ def sync_plaid_accounts(self, integration_id):
             
             if account:
                 transaction, created = BankTransaction.objects.update_or_create(
-                    account=account,
-                    plaid_transaction_id=txn['transaction_id'],
+                    organization=integration.organization,
+                    bank_account=account,
+                    external_id=txn['transaction_id'],
                     defaults={
                         'transaction_date': txn['date'],
-                        'posted_date': txn.get('authorized_date'),
                         'amount': abs(txn['amount']),
-                        'iso_currency_code': txn.get('iso_currency_code', 'USD'),
+                        'currency': txn.get('iso_currency_code', 'USD'),
                         'merchant_name': txn.get('merchant_name'),
-                        'name': txn['name'],
-                        'category': txn.get('category', []),
-                        'pending': txn.get('pending', False),
-                        'is_subscription_payment': is_subscription
+                        'description': txn.get('name', ''),
+                        'category': 'software' if is_subscription else 'uncategorized',
+                        'is_subscription_related': is_subscription,
+                        'raw_data': txn,
                     }
                 )
                 
@@ -317,15 +384,20 @@ def sync_plaid_accounts(self, integration_id):
                     transactions_created += 1
                 
                 # Try to match to existing subscription
-                if is_subscription and not transaction.matched_subscription:
+                if is_subscription and not transaction.subscription:
                     matched = Subscription.objects.filter(
                         organization=integration.organization,
                         name__icontains=merchant
                     ).first()
                     
                     if matched:
-                        transaction.matched_subscription = matched
-                        transaction.save()
+                        transaction.subscription = matched
+                        transaction.is_matched = True
+                        transaction.match_confidence = 0.7
+                        transaction.matched_by = 'rule'
+                        transaction.save(update_fields=[
+                            'subscription', 'is_matched', 'match_confidence', 'matched_by'
+                        ])
         
         integration.last_sync_at = timezone.now()
         integration.save()
@@ -342,7 +414,7 @@ def sync_plaid_accounts(self, integration_id):
         logger.error(f"Integration {integration_id} not found")
     except Exception as e:
         logger.error(f"Plaid sync failed: {e}")
-        self.retry(countdown=300)
+        self.retry(countdown=_backoff_seconds(self.request.retries))
 
 
 @shared_task
@@ -355,7 +427,7 @@ def scan_emails(email_config_id):
         config = EmailScanConfig.objects.select_related('integration').get(id=email_config_id)
         integration = config.integration
         
-        credentials = integration.credentials_encrypted or {}
+        credentials = integration.credentials or {}
         access_token = credentials.get('access_token')
         
         if not access_token:
@@ -684,7 +756,7 @@ def scan_emails_for_subscriptions(integration):
     """Wrapper for email scanning"""
     from integrations.models import EmailScanConfig
     
-    configs = EmailScanConfig.objects.filter(integration=integration, is_active=True)
+    configs = EmailScanConfig.objects.filter(integration=integration, enabled=True)
     total_items = 0
     
     for config in configs:
@@ -696,7 +768,7 @@ def scan_emails_for_subscriptions(integration):
 
 def test_google_workspace(integration):
     """Test Google Workspace connection"""
-    credentials = integration.credentials_encrypted or {}
+    credentials = integration.credentials or {}
     access_token = credentials.get('access_token')
     
     if not access_token:
@@ -705,7 +777,8 @@ def test_google_workspace(integration):
     response = requests.get(
         'https://admin.googleapis.com/admin/directory/v1/users',
         headers={'Authorization': f'Bearer {access_token}'},
-        params={'customer': 'my_customer', 'maxResults': 1}
+        params={'customer': 'my_customer', 'maxResults': 1},
+        timeout=15,
     )
     
     if response.status_code == 200:
@@ -716,7 +789,7 @@ def test_google_workspace(integration):
 
 def test_microsoft_365(integration):
     """Test Microsoft 365 connection"""
-    credentials = integration.credentials_encrypted or {}
+    credentials = integration.credentials or {}
     access_token = credentials.get('access_token')
     
     if not access_token:
@@ -724,7 +797,8 @@ def test_microsoft_365(integration):
     
     response = requests.get(
         'https://graph.microsoft.com/v1.0/me',
-        headers={'Authorization': f'Bearer {access_token}'}
+        headers={'Authorization': f'Bearer {access_token}'},
+        timeout=15,
     )
     
     if response.status_code == 200:
@@ -735,7 +809,7 @@ def test_microsoft_365(integration):
 
 def test_plaid(integration):
     """Test Plaid connection"""
-    credentials = integration.credentials_encrypted or {}
+    credentials = integration.credentials or {}
     access_token = credentials.get('access_token')
     
     if not access_token:

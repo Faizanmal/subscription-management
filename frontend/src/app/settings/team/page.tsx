@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { useOrganizationStore, useAuthStore } from '@/lib/stores';
+import { organizationApi } from '@/lib/services';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -135,7 +136,6 @@ export default function TeamPage() {
       await updateMemberRole(memberId, role);
       toast.success('Role updated successfully');
     } catch (error) {
-      console.error('Failed to update role', error);
       toast.error('Failed to update role');
     }
   };
@@ -146,14 +146,17 @@ export default function TeamPage() {
       toast.success('Member removed');
       setDeleteConfirm(null);
     } catch (error) {
-      console.error('Failed to remove member', error);
       toast.error('Failed to remove member');
     }
   };
 
   const handleResendInvite = async (inviteId: string) => {
-    // TODO: call API to resend the invite using inviteId
-    toast.success(`Invitation ${inviteId} resent`);
+    try {
+      await organizationApi.resendInvitation(inviteId);
+      toast.success('Invitation resent successfully');
+    } catch (error) {
+      toast.error('Failed to resend invitation');
+    }
   };
 
   const handleCancelInvite = async (inviteId: string) => {

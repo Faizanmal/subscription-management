@@ -67,6 +67,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'axes.middleware.AxesMiddleware',
     'users.middleware.OrganizationMiddleware',
+    'users.middleware.SecurityHeadersMiddleware',
 ]
 
 ROOT_URLCONF = 'backend.urls'

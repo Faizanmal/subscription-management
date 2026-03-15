@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { formsApi, templatesApi } from "@/lib/api-client";
+import { formsApi, templatesApi } from "@/lib/formforge-services";
 import type { FormTemplate } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,7 +26,6 @@ export default function NewFormPage() {
         const data = await templatesApi.list() as FormTemplate[];
         setTemplates(data);
       } catch (error) {
-        console.error("Failed to fetch templates:", error);
       }
     };
     fetchTemplates();
@@ -50,7 +49,6 @@ export default function NewFormPage() {
     } catch (error: unknown) {
       const err = error as { response?: { data?: { error?: string } } };
       toast.error(err.response?.data?.error || "Failed to generate form");
-      console.error(error);
     } finally {
       setLoading(false);
     }
@@ -64,7 +62,6 @@ export default function NewFormPage() {
       router.push(`/forms/${form.id}/edit`);
     } catch (error) {
       toast.error("Failed to create form from template");
-      console.error(error);
     } finally {
       setLoading(false);
     }

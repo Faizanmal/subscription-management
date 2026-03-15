@@ -153,7 +153,6 @@ export default function NewSubscriptionPage() {
       toast.success('Subscription created successfully');
       router.push(`/subscriptions/${subscription.id}`);
     } catch (error) {
-      console.error('Failed to create subscription', error);
       toast.error('Failed to create subscription');
     } finally {
       setIsSubmitting(false);

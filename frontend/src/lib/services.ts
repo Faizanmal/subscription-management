@@ -46,25 +46,25 @@ import type {
 
 export const authApi = {
   login: (credentials: LoginCredentials) =>
-    api.post<AuthTokens>('/auth/login/', credentials),
+    api.post<AuthTokens>('/auth/token/', credentials),
 
   register: (data: RegisterData) =>
-    api.post<{ user: User; tokens: AuthTokens }>('/users/register/', data),
+    api.post<{ user: User; tokens: AuthTokens }>('/auth/register/', data),
 
   logout: () =>
     api.post('/auth/logout/'),
 
   refreshToken: (refresh: string) =>
-    api.post<{ access: string }>('/auth/refresh/', { refresh }),
+    api.post<{ access: string }>('/auth/token/refresh/', { refresh }),
 
   me: () =>
-    api.get<User>('/users/me/'),
+    api.get<User>('/auth/me/'),
 
   updateProfile: (data: Partial<User>) =>
-    api.patch<User>('/users/me/', data),
+    api.patch<User>('/auth/me/', data),
 
   changePassword: (data: { old_password: string; new_password: string; new_password2: string }) =>
-    api.post('/users/me/change_password/', data),
+    api.post('/auth/me/password/', data),
 
   updateNotificationSettings: (settings: Record<string, unknown>) =>
     api.patch('/users/me/notification-settings/', settings),
@@ -86,37 +86,37 @@ export const authApi = {
 
 export const organizationApi = {
   get: () =>
-    api.get<Organization>('/users/organization/'),
+    api.get<Organization>('/auth/organizations/current/'),
 
   update: (data: Partial<Organization>) =>
-    api.patch<Organization>('/users/organization/', data),
+    api.patch<Organization>('/auth/organizations/', data),
 
   updateSettings: (settings: Partial<Organization['settings']>) =>
-    api.patch<Organization>('/users/organization/', { settings }),
+    api.patch<Organization>('/auth/organizations/', { settings }),
 
   getMembers: () =>
-    api.get<User[]>('/users/members/'),
+    api.get<User[]>('/auth/users/'),
 
   getMember: (id: string) =>
-    api.get<User>(`/users/members/${id}/`),
+    api.get<User>(`/auth/users/${id}/`),
 
   updateMember: (id: string, data: Partial<User>) =>
-    api.patch<User>(`/users/members/${id}/`, data),
+    api.patch<User>(`/auth/users/${id}/`, data),
 
   removeMember: (id: string) =>
-    api.delete(`/users/members/${id}/`),
+    api.delete(`/auth/users/${id}/`),
 
   getInvitations: () =>
-    api.get<Invitation[]>('/users/invitations/'),
+    api.get<Invitation[]>('/auth/invitations/'),
 
   sendInvitation: (data: { email: string; role: string }) =>
-    api.post<Invitation>('/users/invitations/', data),
+    api.post<Invitation>('/auth/invitations/', data),
 
   resendInvitation: (id: string) =>
-    api.post<Invitation>(`/users/invitations/${id}/resend/`),
+    api.post<Invitation>(`/auth/invitations/${id}/resend/`),
 
   revokeInvitation: (id: string) =>
-    api.post(`/users/invitations/${id}/revoke/`),
+    api.post(`/auth/invitations/${id}/cancel/`),
 };
 
 // ==================== Subscriptions API ====================
@@ -131,63 +131,63 @@ export const subscriptionsApi = {
     ordering?: string;
     page?: number;
   }) =>
-    api.get<PaginatedResponse<Subscription>>('/services/subscriptions/', { params }),
+    api.get<PaginatedResponse<Subscription>>('/subscriptions/', { params }),
 
   get: (id: string) =>
-    api.get<Subscription>(`/services/subscriptions/${id}/`),
+    api.get<Subscription>(`/subscriptions/${id}/`),
 
   create: (data: Partial<Subscription>) =>
-    api.post<Subscription>('/services/subscriptions/', data),
+    api.post<Subscription>('/subscriptions/', data),
 
   update: (id: string, data: Partial<Subscription>) =>
-    api.patch<Subscription>(`/services/subscriptions/${id}/`, data),
+    api.patch<Subscription>(`/subscriptions/${id}/`, data),
 
   delete: (id: string) =>
-    api.delete(`/services/subscriptions/${id}/`),
+    api.delete(`/subscriptions/${id}/`),
 
   cancel: (id: string, reason?: string) =>
-    api.post(`/services/subscriptions/${id}/cancel/`, { reason }),
+    api.post(`/subscriptions/${id}/cancel/`, { reason }),
 
   renew: (id: string) =>
-    api.post<Subscription>(`/services/subscriptions/${id}/renew/`),
+    api.post<Subscription>(`/subscriptions/${id}/renew/`),
 
   // Licenses
   getLicenses: (id: string) =>
-    api.get<LicenseAssignment[]>(`/services/subscriptions/${id}/licenses/`),
+    api.get<LicenseAssignment[]>(`/subscriptions/${id}/licenses/`),
 
   assignLicense: (id: string, data: { user_id: string; license_type?: string }) =>
-    api.post<LicenseAssignment>(`/services/subscriptions/${id}/licenses/`, data),
+    api.post<LicenseAssignment>(`/subscriptions/${id}/licenses/`, data),
 
   revokeLicense: (id: string, licenseId: string) =>
-    api.delete(`/services/subscriptions/${id}/licenses/${licenseId}/`),
+    api.delete(`/subscriptions/${id}/licenses/${licenseId}/`),
 
   // Usage
   getUsage: (id: string, params?: { period_type?: string; limit?: number }) =>
-    api.get<UsageMetrics[]>(`/services/subscriptions/${id}/usage/`, { params }),
+    api.get<UsageMetrics[]>(`/subscriptions/${id}/usage/`, { params }),
 
   // Costs
   getCosts: (id: string, params?: { limit?: number }) =>
-    api.get<CostRecord[]>(`/services/subscriptions/${id}/costs/`, { params }),
+    api.get<CostRecord[]>(`/subscriptions/${id}/costs/`, { params }),
 
   addCost: (id: string, data: Partial<CostRecord>) =>
-    api.post<CostRecord>(`/services/subscriptions/${id}/costs/`, data),
+    api.post<CostRecord>(`/subscriptions/${id}/costs/`, data),
 
   // Recommendations
   getRecommendations: (id: string) =>
-    api.get<Recommendation[]>(`/services/subscriptions/${id}/recommendations/`),
+    api.get<Recommendation[]>(`/subscriptions/${id}/recommendations/`),
 };
 
 // ==================== Vendors API ====================
 
 export const vendorsApi = {
   list: (params?: { category?: string; search?: string }) =>
-    api.get<PaginatedResponse<Vendor>>('/services/vendors/', { params }),
+    api.get<PaginatedResponse<Vendor>>('/vendors/', { params }),
 
   get: (id: string) =>
-    api.get<Vendor>(`/services/vendors/${id}/`),
+    api.get<Vendor>(`/vendors/${id}/`),
 
   search: (query: string) =>
-    api.get<Vendor[]>('/services/vendors/search/', { params: { q: query } }),
+    api.get<Vendor[]>('/vendors/search/', { params: { q: query } }),
 };
 
 // ==================== Usage Metrics API ====================
@@ -199,7 +199,7 @@ export const usageApi = {
     start_date?: string;
     end_date?: string;
   }) =>
-    api.get<PaginatedResponse<UsageMetrics>>('/services/usage/', { params }),
+    api.get<PaginatedResponse<UsageMetrics>>('/usage-metrics/', { params }),
 
   getAggregated: (params?: {
     period?: 'day' | 'week' | 'month';
@@ -211,10 +211,10 @@ export const usageApi = {
       total_logins: number;
       avg_session_duration: number;
       by_subscription: { subscription_id: string; name: string; active_users: number }[];
-    }>('/services/usage/aggregated/', { params }),
+    }>('/usage-metrics/', { params }),
 
   track: (subscriptionId: string) =>
-    api.post(`/services/usage/track/`, { subscription_id: subscriptionId }),
+    api.post(`/usage-events/`, { subscription_id: subscriptionId, event_type: 'manual_track' }),
 };
 
 // ==================== Costs API ====================
@@ -226,7 +226,7 @@ export const costsApi = {
     end_date?: string;
     status?: string;
   }) =>
-    api.get<PaginatedResponse<CostRecord>>('/services/costs/', { params }),
+    api.get<PaginatedResponse<CostRecord>>('/cost-records/', { params }),
 
   getSummary: (params?: {
     period?: 'month' | 'quarter' | 'year';
@@ -235,28 +235,28 @@ export const costsApi = {
     api.get<{
       total: number;
       by_category: CategoryBreakdown[];
-      by_department: { department: string; cost: number }[];
+      by_department: { department: string; spend: number; subscription_count?: number }[];
       trend: DashboardTrend[];
-    }>('/services/costs/summary/', { params }),
+    }>('/analytics/spend/', { params }),
 };
 
 // ==================== Redundancy API ====================
 
 export const redundancyApi = {
   list: () =>
-    api.get<PaginatedResponse<RedundancyGroup>>('/services/redundancy-groups/'),
+    api.get<PaginatedResponse<RedundancyGroup>>('/redundancies/'),
 
   get: (id: string) =>
-    api.get<RedundancyGroup>(`/services/redundancy-groups/${id}/`),
+    api.get<RedundancyGroup>(`/redundancies/${id}/`),
 
   dismiss: (id: string, reason?: string) =>
-    api.post(`/services/redundancy-groups/${id}/dismiss/`, { reason }),
+    api.post(`/redundancies/${id}/dismiss/`, { reason }),
 
   resolve: (id: string) =>
-    api.post(`/services/redundancy-groups/${id}/resolve/`),
+    api.post(`/redundancies/${id}/start_consolidation/`),
 
   scan: () =>
-    api.post<{ task_id: string }>('/services/redundancy-groups/scan/'),
+    api.post<{ task_id: string }>('/redundancies/scan/'),
 };
 
 // ==================== Recommendations API ====================
@@ -268,97 +268,97 @@ export const recommendationsApi = {
     priority?: string;
     subscription?: string;
   }) =>
-    api.get<PaginatedResponse<Recommendation>>('/services/recommendations/', { params }),
+    api.get<PaginatedResponse<Recommendation>>('/recommendations/', { params }),
 
   get: (id: string) =>
-    api.get<Recommendation>(`/services/recommendations/${id}/`),
+    api.get<Recommendation>(`/recommendations/${id}/`),
 
   approve: (id: string) =>
-    api.post<Recommendation>(`/services/recommendations/${id}/approve/`),
+    api.post<Recommendation>(`/recommendations/${id}/approve/`),
 
   dismiss: (id: string, reason: string) =>
-    api.post(`/services/recommendations/${id}/dismiss/`, { reason }),
+    api.post(`/recommendations/${id}/dismiss/`, { reason }),
 
   implement: (id: string) =>
-    api.post<Recommendation>(`/services/recommendations/${id}/implement/`),
+    api.post<Recommendation>(`/recommendations/${id}/implement/`),
 
   generate: () =>
-    api.post<{ task_id: string }>('/services/recommendations/generate/'),
+    api.post<{ task_id: string }>('/recommendations/generate/'),
 
   getQuickWins: (limit?: number) =>
-    api.get<Recommendation[]>('/services/recommendations/quick-wins/', { params: { limit } }),
+    api.get<Recommendation[]>('/recommendations/quick-wins/', { params: { limit } }),
 
   getSavingsSummary: () =>
     api.get<{
       total_potential: number;
       implemented: number;
       by_type: { type: string; count: number; savings: number }[];
-    }>('/services/recommendations/savings-summary/'),
+    }>('/recommendations/savings-summary/'),
 };
 
 // ==================== Workflows API ====================
 
 export const workflowsApi = {
   list: () =>
-    api.get<PaginatedResponse<Workflow>>('/services/workflows/'),
+    api.get<PaginatedResponse<Workflow>>('/workflows/'),
 
   get: (id: string) =>
-    api.get<Workflow>(`/services/workflows/${id}/`),
+    api.get<Workflow>(`/workflows/${id}/`),
 
   create: (data: Partial<Workflow>) =>
-    api.post<Workflow>('/services/workflows/', data),
+    api.post<Workflow>('/workflows/', data),
 
   update: (id: string, data: Partial<Workflow>) =>
-    api.patch<Workflow>(`/services/workflows/${id}/`, data),
+    api.patch<Workflow>(`/workflows/${id}/`, data),
 
   delete: (id: string) =>
-    api.delete(`/services/workflows/${id}/`),
+    api.delete(`/workflows/${id}/`),
 
   toggle: (id: string) =>
-    api.post<Workflow>(`/services/workflows/${id}/toggle/`),
+    api.post<Workflow>(`/workflows/${id}/toggle/`),
 
   run: (id: string) =>
-    api.post<WorkflowExecution>(`/services/workflows/${id}/run/`),
+    api.post<WorkflowExecution>(`/workflows/${id}/run/`),
 
   getExecutions: (id: string) =>
-    api.get<WorkflowExecution[]>(`/services/workflows/${id}/executions/`),
+    api.get<WorkflowExecution[]>(`/workflows/${id}/executions/`),
 
   listExecutions: () =>
-    api.get<PaginatedResponse<WorkflowExecution>>('/services/workflow-executions/'),
+    api.get<PaginatedResponse<WorkflowExecution>>('/workflow-executions/'),
 };
 
 // ==================== Alerts API ====================
 
 export const alertsApi = {
   getRenewals: (params?: { days?: number }) =>
-    api.get<RenewalAlert[]>('/services/renewal-alerts/', { params }),
+    api.get<PaginatedResponse<RenewalAlert>>('/alerts/', { params: { ...params, alert_type: 'renewal' } }).then((data) => data.results || []),
 
   listRenewalAlerts: (params?: { days?: number }) =>
-    api.get<PaginatedResponse<RenewalAlert>>('/services/renewal-alerts/', { params }),
+    api.get<PaginatedResponse<RenewalAlert>>('/alerts/', { params: { ...params, alert_type: 'renewal' } }),
 
   dismissRenewal: (id: string) =>
-    api.post(`/services/renewal-alerts/${id}/dismiss/`),
+    api.post(`/alerts/${id}/take_action/`, { action: 'resolve' }),
 
   dismissRenewalAlert: (id: string) =>
-    api.post<RenewalAlert>(`/services/renewal-alerts/${id}/dismiss/`),
+    api.post<RenewalAlert>(`/alerts/${id}/take_action/`, { action: 'resolve' }),
 
   acknowledgeRenewalAlert: (id: string) =>
-    api.post<RenewalAlert>(`/services/renewal-alerts/${id}/acknowledge/`),
+    api.post<RenewalAlert>(`/alerts/${id}/take_action/`, { action: 'acknowledge' }),
 
   getBudgets: () =>
-    api.get<BudgetAlert[]>('/services/budget-alerts/'),
+    api.get<BudgetAlert[]>('/budgets/'),
 
   listBudgetAlerts: () =>
-    api.get<PaginatedResponse<BudgetAlert>>('/services/budget-alerts/'),
+    api.get<PaginatedResponse<BudgetAlert>>('/budgets/'),
 
   createBudgetAlert: (data: Partial<BudgetAlert>) =>
-    api.post<BudgetAlert>('/services/budget-alerts/', data),
+    api.post<BudgetAlert>('/budgets/', data),
 
   dismissBudget: (id: string) =>
-    api.post(`/services/budget-alerts/${id}/dismiss/`),
+    api.delete(`/budgets/${id}/`),
 
   deleteBudgetAlert: (id: string) =>
-    api.delete(`/services/budget-alerts/${id}/`),
+    api.delete(`/budgets/${id}/`),
 };
 
 // ==================== Integrations API ====================
@@ -563,7 +563,7 @@ export const securityApi = {
     end_date?: string;
     page?: number;
   }) =>
-    api.get<PaginatedResponse<AuditLog>>('/security/audit-logs/', { params }),
+    api.get<PaginatedResponse<AuditLog>>('/security/access-logs/', { params }),
 
   // Dashboard
   getSecurityDashboard: () =>
@@ -671,41 +671,74 @@ export const backupsApi = {
 
 export const notificationsApi = {
   list: (params?: { unread_only?: boolean }) =>
-    api.get<Notification[]>('/users/notifications/', { params }),
+    api.get<Notification[]>('/auth/notifications/', { params }),
 
   markAsRead: (id: string) =>
-    api.post(`/users/notifications/${id}/read/`),
+    api.post(`/auth/notifications/${id}/read/`),
 
   markAllAsRead: () =>
-    api.post('/users/notifications/mark_all_read/'),
+    api.post('/auth/notifications/mark_all_read/'),
 
   delete: (id: string) =>
-    api.delete(`/users/notifications/${id}/`),
+    api.delete(`/auth/notifications/${id}/`),
 
   getUnreadCount: () =>
-    api.get<{ count: number }>('/users/notifications/unread_count/'),
+    api.get<{ count: number }>('/auth/notifications/unread_count/'),
 };
 
 // ==================== Dashboard API ====================
 
 export const dashboardApi = {
   getStats: () =>
-    api.get<DashboardStats>('/services/dashboard/stats/'),
+    api.get<DashboardStats>('/dashboard/'),
 
   getTrends: (params?: { period?: 'week' | 'month' | 'quarter' | 'year' }) =>
-    api.get<DashboardTrend[]>('/services/dashboard/trends/', { params }),
+    api.get<DashboardTrend[]>('/analytics/trend/', { params }).then((data) =>
+      Array.isArray(data) ? data.map((item: unknown) => {
+        const trend = item as Partial<DashboardTrend> & Record<string, unknown>;
+        return {
+          period: trend.period,
+          date: trend.date,
+          cost: Number((trend.spend as number | undefined) ?? trend.cost ?? 0),
+          amount: Number((trend.spend as number | undefined) ?? trend.amount ?? 0),
+          subscription_count: Number(trend.subscription_count ?? 0),
+        };
+      }) : []
+    ),
 
   getCategoryBreakdown: () =>
-    api.get<CategoryBreakdown[]>('/services/dashboard/categories/'),
+    api.get<{ by_category: CategoryBreakdown[] }>('/analytics/spend/').then((data) =>
+      (data?.by_category || []).map((item: unknown): CategoryBreakdown => {
+        const category = item as Partial<CategoryBreakdown> & Record<string, unknown>;
+        return {
+          category: (category.category ?? 'other') as CategoryBreakdown['category'],
+          count: Number((category.subscription_count as number | undefined) ?? category.count ?? 0),
+          cost: Number((category.spend as number | undefined) ?? category.cost ?? 0),
+          avg_utilization: Number(category.avg_utilization ?? 0),
+        };
+      })
+    ),
 
   getTopSpend: (limit?: number) =>
-    api.get<Subscription[]>('/services/dashboard/top-spend/', { params: { limit } }),
+    api.get<{ top_subscriptions: Subscription[] }>('/analytics/spend/', { params: { limit } }).then((data) =>
+      data?.top_subscriptions || []
+    ),
 
   getLowUtilization: (threshold?: number, limit?: number) =>
-    api.get<Subscription[]>('/services/dashboard/low-utilization/', { params: { threshold, limit } }),
+    api.get<PaginatedResponse<Subscription>>('/subscriptions/', {
+      params: {
+        status: 'active',
+        ordering: 'utilization_rate',
+        page_size: limit,
+      },
+    }).then((data) =>
+      (data?.results || []).filter((s) => Number(s.utilization_rate || 0) <= (threshold || 30))
+    ),
 
   getUpcomingRenewals: (days?: number) =>
-    api.get<Subscription[]>('/services/dashboard/upcoming-renewals/', { params: { days } }),
+    api.get<PaginatedResponse<RenewalAlert>>('/alerts/', { params: { alert_type: 'renewal', days } }).then((data) =>
+      (data?.results || []).map((alert) => alert.subscription).filter(Boolean) as Subscription[]
+    ),
 
   getOptimizationReport: () =>
     api.get<{
@@ -731,14 +764,14 @@ export const dashboardApi = {
       }[];
       low_utilization: { name: string; utilization: number; cost: number }[];
       upcoming_renewals: { name: string; renewal_date: string; cost: number }[];
-    }>('/services/dashboard/optimization-report/'),
+    }>('/dashboard/'),
 };
 
 // ==================== Discovery API ====================
 
 export const discoveryApi = {
   scan: (source: 'email' | 'bank' | 'sso' | 'all') =>
-    api.post<{ task_id: string }>('/services/discovery/scan/', { source }),
+    api.post<{ task_id: string }>('/discovery/scan/', { source }),
 
   getScanStatus: (taskId: string) =>
     api.get<{
@@ -746,7 +779,7 @@ export const discoveryApi = {
       progress: number;
       found_count: number;
       message?: string;
-    }>(`/services/discovery/status/${taskId}/`),
+    }>(`/discovery/status/${taskId}/`),
 
   getPendingDiscoveries: () =>
     api.get<{
@@ -757,11 +790,11 @@ export const discoveryApi = {
       confidence: number;
       raw_data: Record<string, unknown>;
       created_at: string;
-    }[]>('/services/discovery/pending/'),
+    }[]>('/discovery/pending/'),
 
   confirmDiscovery: (id: string, data?: Partial<Subscription>) =>
-    api.post<Subscription>(`/services/discovery/${id}/confirm/`, data),
+    api.post<Subscription>(`/discovery/${id}/confirm/`, data),
 
   dismissDiscovery: (id: string) =>
-    api.post(`/services/discovery/${id}/dismiss/`),
+    api.post(`/discovery/${id}/dismiss/`),
 };

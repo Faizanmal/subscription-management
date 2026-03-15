@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { formsApi } from "@/lib/api-client";
+import { formsApi } from "@/lib/formforge-services";
 import type { Form, FormField, FormSchema } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,10 @@ export default function FormEditorPage() {
   }, [formId, router]);
 
   useEffect(() => {
-    loadForm();
+    const timer = window.setTimeout(() => {
+      void loadForm();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadForm]);
 
   const handleSave = async () => {

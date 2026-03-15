@@ -96,7 +96,6 @@ export default function SubscriptionDetailPage() {
         setRecommendations(recsData);
         setLicenses(licensesData);
       } catch (error) {
-        console.error('Failed to load related data:', error);
       }
     })();
 
@@ -388,7 +387,7 @@ export default function SubscriptionDetailPage() {
                         />
                         <YAxis tick={{ fontSize: 10 }} />
                         <Tooltip
-                          formatter={(value: any) =>
+                          formatter={(value: unknown) =>
                             value !== undefined ? [Number(value), 'Active Users'] : ['N/A', 'Active Users']
                           }
                           labelFormatter={(label) => formatDate(label)}
@@ -508,7 +507,7 @@ export default function SubscriptionDetailPage() {
                         />
                         <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v}`} />
                         <Tooltip
-                          formatter={(value: any) =>
+                          formatter={(value: unknown) =>
                             value !== undefined ? formatCurrency(Number(value)) : 'N/A'
                           }
                         />
