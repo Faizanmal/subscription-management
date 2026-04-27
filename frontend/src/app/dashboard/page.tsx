@@ -238,7 +238,7 @@ export default function DashboardPage() {
                       tickFormatter={(value) => `$${value / 1000}k`}
                     />
                     <Tooltip
-                      formatter={(value: any) =>
+                      formatter={(value: unknown) =>
                         value !== undefined
                           ? [formatCurrency(Number(value)), 'Cost']
                           : ['N/A', 'Cost']
@@ -288,7 +288,7 @@ export default function DashboardPage() {
                       ))}
                     </Pie>
                     <Tooltip
-                      formatter={(value: any) =>
+                      formatter={(value: unknown) =>
                         value !== undefined ? formatCurrency(Number(value)) : 'N/A'
                       }
                     />
@@ -510,7 +510,7 @@ export default function DashboardPage() {
                     width={100}
                   />
                   <Tooltip
-                    formatter={(value: any) =>
+                    formatter={(value: unknown) =>
                       value !== undefined ? formatCurrency(Number(value)) : 'N/A'
                     }
                   />

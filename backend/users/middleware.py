@@ -2,7 +2,6 @@
 Middleware for users app
 """
 
-from django.utils import timezone
 from django.conf import settings
 import logging
 

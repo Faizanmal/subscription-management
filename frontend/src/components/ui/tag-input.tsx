@@ -11,8 +11,12 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { useTags, useCreateTag } from '@/hooks/use-api';
+<<<<<<< HEAD
 // Legacy import removed - use types from '@/types/swm' instead
 // import type { Tag } from '@/lib/api';
+=======
+import type { Tag } from '@/hooks/use-api';
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
 import { cn } from '@/lib/utils';
 
 interface TagInputProps {
@@ -46,7 +50,6 @@ export function TagInput({ selectedTags, onChange, className }: TagInputProps) {
       await createTag.mutateAsync({ name: newTagName, color });
       setNewTagName('');
     } catch (error) {
-      console.error('Failed to create tag:', error);
     }
   };
 

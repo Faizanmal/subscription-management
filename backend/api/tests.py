@@ -2,7 +2,11 @@
 Tests for API permissions and exception handling
 """
 
+<<<<<<< HEAD
 from django.test import TestCase, Client
+=======
+from django.test import TestCase
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
 from django.contrib.auth import get_user_model
 from users.models import Organization, Role
 from api.permissions import IsAdmin, IsFinance, IsOrgMember

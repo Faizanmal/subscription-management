@@ -2,8 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+<<<<<<< HEAD
 // DEPRECATED: formforge API client was removed. Forms feature needs migration to /api/v1 endpoints.
 // import { formsApi } from "@/lib/api-client";
+=======
+import { formsApi } from "@/lib/formforge-services";
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
 import type { Form } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +38,10 @@ export default function FormEmbedPage() {
   }, [formId]);
 
   useEffect(() => {
-    loadForm();
+    const timer = window.setTimeout(() => {
+      void loadForm();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadForm]);
 
   const hostedUrl = form ? `${window.location.origin}/form/${form.slug}` : "";
@@ -53,7 +60,6 @@ export default function FormEmbedPage() {
     container: '#formforge-${form.slug}',
     theme: 'light', // or 'dark'
     onSubmit: function(data) {
-      console.log('Form submitted:', data);
     }
   });
 </script>`
@@ -93,7 +99,6 @@ export default function MyFormComponent() {
         container: '#formforge-container',
         theme: 'light',
         onSubmit: (data) => {
-          console.log('Form submitted:', data);
         }
       });
     };

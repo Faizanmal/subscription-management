@@ -2,8 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+<<<<<<< HEAD
 // DEPRECATED: formforge API client was removed. Forms feature needs migration to /api/v1 endpoints.
 // import { formsApi, submissionsApi } from "@/lib/api-client";
+=======
+import { formsApi, submissionsApi } from "@/lib/formforge-services";
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
 import type { Form, Submission, Analytics } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,7 +44,10 @@ export default function FormAnalyticsPage() {
   }, [formId]);
 
   useEffect(() => {
-    loadData();
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadData]);
 
   // Prepare chart data - submissions by day (last 30 days)

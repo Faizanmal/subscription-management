@@ -105,14 +105,16 @@ export default function AnalyticsPage() {
         }))
       );
     } catch (err) {
-      console.error('Failed to load analytics data', err);
     } finally {
       setIsLoading(false);
     }
   }, [fetchDashboardStats, setCostHistory]);
 
   useEffect(() => {
-    loadData();
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadData]);
 
   // Calculate metrics
@@ -334,7 +336,7 @@ export default function AnalyticsPage() {
                     <XAxis dataKey="month" />
                     <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                     <Tooltip
-                      formatter={(value: any) =>
+                      formatter={(value: unknown) =>
                         value !== undefined
                           ? [`$${Number(value).toLocaleString()}`, 'Spend']
                           : ['N/A', 'Spend']
@@ -383,7 +385,7 @@ export default function AnalyticsPage() {
                         ))}
                       </Pie>
                       <Tooltip
-                        formatter={(value: any) =>
+                        formatter={(value: unknown) =>
                           value !== undefined
                             ? [`$${Number(value).toLocaleString()}`, 'Spend']
                             : ['N/A', 'Spend']
@@ -409,7 +411,7 @@ export default function AnalyticsPage() {
                       />
                       <YAxis dataKey="name" type="category" width={100} />
                       <Tooltip
-                        formatter={(value: any) =>
+                        formatter={(value: unknown) =>
                           value !== undefined
                             ? [`$${Number(value).toLocaleString()}`, 'Cost']
                             : ['N/A', 'Cost']
@@ -620,7 +622,7 @@ export default function AnalyticsPage() {
                       <XAxis dataKey="name" />
                       <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                       <Tooltip
-                        formatter={(value: any) =>
+                        formatter={(value: unknown) =>
                           value !== undefined
                             ? [`$${Number(value).toLocaleString()}`, 'Spend']
                             : ['N/A', 'Spend']

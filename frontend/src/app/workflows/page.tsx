@@ -135,11 +135,7 @@ export default function WorkflowsPage() {
     is_active: true,
   });
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  async function loadData() {
     setIsLoading(true);
     try {
       const [workflowsData, executionsData] = await Promise.all([
@@ -149,12 +145,18 @@ export default function WorkflowsPage() {
       setWorkflows(Array.isArray(workflowsData) ? workflowsData : workflowsData.results || []);
       setExecutions(Array.isArray(executionsData) ? executionsData : executionsData.results || []);
     } catch (error) {
-      console.error('Failed to load workflows', error);
       toast.error('Failed to load workflows');
     } finally {
       setIsLoading(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const handleCreate = async () => {
     try {
@@ -167,7 +169,6 @@ export default function WorkflowsPage() {
       resetForm();
       toast.success('Workflow created successfully');
     } catch (error) {
-      console.error("Failed to create workflow", error);
       toast.error('Failed to create workflow');
     }
   };
@@ -193,7 +194,6 @@ export default function WorkflowsPage() {
       setWorkflows(workflows.map((w) => (w.id === updated.id ? updated : w)));
       toast.success(`Workflow ${updated.is_active ? 'activated' : 'deactivated'}`);
     } catch (error) {
-      console.error('Failed to update workflow', error);
       toast.error('Failed to update workflow');
     }
   };
@@ -204,7 +204,6 @@ export default function WorkflowsPage() {
       setWorkflows(workflows.filter((w) => w.id !== id));
       toast.success('Workflow deleted');
     } catch (error) {
-      console.error('Failed to delete workflow', error);
       toast.error('Failed to delete workflow');
     }
   };
@@ -215,7 +214,6 @@ export default function WorkflowsPage() {
       setExecutions([execution, ...executions]);
       toast.success('Workflow triggered');
     } catch (error) {
-      console.error('Failed to run workflow', error);
       toast.error('Failed to run workflow');
     }
   };

@@ -51,7 +51,11 @@ class BackupTestCase(TestCase):
             type=Role.RoleType.MEMBER,
             is_system_role=True
         )
+<<<<<<< HEAD
         non_admin = User.objects.create_user(
+=======
+        User.objects.create_user(
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
             email='member@example.com',
             password='testpass123!@#',
             organization=self.org,

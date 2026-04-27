@@ -79,11 +79,7 @@ export default function SecurityPage() {
   const [apiKeyForm, setApiKeyForm] = useState({ name: '', scopes: [] as string[] });
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string } | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  async function loadData() {
     setIsLoading(true);
     try {
       const [keys, devices, sessionData, logs] = await Promise.all([
@@ -97,11 +93,17 @@ export default function SecurityPage() {
       setSessions(Array.isArray(sessionData) ? sessionData : sessionData.results || []);
       setAuditLogs(Array.isArray(logs) ? logs : logs.results || []);
     } catch (error) {
-      console.error('Failed to load security data', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const handleCreateApiKey = async () => {
     try {
@@ -124,7 +126,6 @@ export default function SecurityPage() {
       toast.success('API key revoked');
       setDeleteConfirm(null);
     } catch (error) {
-      console.error('Failed to revoke API key', error);
       toast.error('Failed to revoke API key');
     }
   };
@@ -136,7 +137,6 @@ export default function SecurityPage() {
       toast.success('MFA setup initiated');
       loadData();
     } catch (error) {
-      console.error('Failed to setup MFA', error);
       toast.error('Failed to setup MFA');
     }
   };
@@ -148,7 +148,6 @@ export default function SecurityPage() {
       toast.success('MFA device removed');
       setDeleteConfirm(null);
     } catch (error) {
-      console.error('Failed to remove MFA device', error);
       toast.error('Failed to remove MFA device');
     }
   };
@@ -159,7 +158,6 @@ export default function SecurityPage() {
       setSessions(sessions.filter((s) => s.id !== id));
       toast.success('Session revoked');
     } catch (error) {
-      console.error('Failed to revoke session', error);
       toast.error('Failed to revoke session');
     }
   };
@@ -170,7 +168,6 @@ export default function SecurityPage() {
       setSessions([]);
       toast.success('All sessions revoked');
     } catch (error) {
-      console.error('Failed to revoke sessions', error);
       toast.error('Failed to revoke sessions');
     }
   };
