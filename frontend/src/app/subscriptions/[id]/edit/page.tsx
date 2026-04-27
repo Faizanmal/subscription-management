@@ -105,11 +105,14 @@ export default function EditSubscriptionPage() {
 
   useEffect(() => {
     if (currentSubscription) {
-      setFormData(currentSubscription);
-      setVendorSearch(currentSubscription.vendor?.name || currentSubscription.name);
-      if (currentSubscription.vendor) {
-        setSelectedVendor(currentSubscription.vendor);
-      }
+      const timer = window.setTimeout(() => {
+        setFormData(currentSubscription);
+        setVendorSearch(currentSubscription.vendor?.name || currentSubscription.name);
+        if (currentSubscription.vendor) {
+          setSelectedVendor(currentSubscription.vendor);
+        }
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [currentSubscription]);
 
@@ -179,7 +182,6 @@ export default function EditSubscriptionPage() {
       toast.success('Subscription updated successfully');
       router.push(`/subscriptions/${subscriptionId}`);
     } catch (error) {
-      console.error('Failed to update subscription', error);
       toast.error('Failed to update subscription');
     } finally {
       setIsSubmitting(false);
@@ -193,7 +195,6 @@ export default function EditSubscriptionPage() {
       toast.success('Subscription deleted');
       router.push('/subscriptions');
     } catch (error) {
-      console.error('Failed to delete subscription', error);
       toast.error('Failed to delete subscription');
     } finally {
       setIsDeleting(false);

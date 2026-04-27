@@ -136,7 +136,6 @@ export default function TeamPage() {
       await updateMemberRole(memberId, role);
       toast.success('Role updated successfully');
     } catch (error) {
-      console.error('Failed to update role', error);
       toast.error('Failed to update role');
     }
   };
@@ -147,7 +146,6 @@ export default function TeamPage() {
       toast.success('Member removed');
       setDeleteConfirm(null);
     } catch (error) {
-      console.error('Failed to remove member', error);
       toast.error('Failed to remove member');
     }
   };
@@ -157,7 +155,10 @@ export default function TeamPage() {
       await organizationApi.resendInvitation(inviteId);
       toast.success('Invitation resent successfully');
     } catch (error) {
+<<<<<<< HEAD
       console.error('Failed to resend invitation', error);
+=======
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
       toast.error('Failed to resend invitation');
     }
   };

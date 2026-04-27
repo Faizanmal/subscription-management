@@ -694,6 +694,7 @@ export const dashboardApi = {
 
   getTrends: (params?: { period?: 'week' | 'month' | 'quarter' | 'year' }) =>
     api.get<DashboardTrend[]>('/analytics/trend/', { params }).then((data) =>
+<<<<<<< HEAD
       Array.isArray(data) ? data.map((item: any) => ({
         period: item.period,
         date: item.date,
@@ -701,16 +702,40 @@ export const dashboardApi = {
         amount: Number(item.spend ?? item.amount ?? 0),
         subscription_count: Number(item.subscription_count ?? 0),
       })) : []
+=======
+      Array.isArray(data) ? data.map((item: unknown) => {
+        const trend = item as Partial<DashboardTrend> & Record<string, unknown>;
+        return {
+          period: trend.period,
+          date: trend.date,
+          cost: Number((trend.spend as number | undefined) ?? trend.cost ?? 0),
+          amount: Number((trend.spend as number | undefined) ?? trend.amount ?? 0),
+          subscription_count: Number(trend.subscription_count ?? 0),
+        };
+      }) : []
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
     ),
 
   getCategoryBreakdown: () =>
     api.get<{ by_category: CategoryBreakdown[] }>('/analytics/spend/').then((data) =>
+<<<<<<< HEAD
       (data?.by_category || []).map((item: any) => ({
         category: item.category,
         count: Number(item.subscription_count ?? item.count ?? 0),
         cost: Number(item.spend ?? item.cost ?? 0),
         avg_utilization: Number(item.avg_utilization ?? 0),
       }))
+=======
+      (data?.by_category || []).map((item: unknown): CategoryBreakdown => {
+        const category = item as Partial<CategoryBreakdown> & Record<string, unknown>;
+        return {
+          category: (category.category ?? 'other') as CategoryBreakdown['category'],
+          count: Number((category.subscription_count as number | undefined) ?? category.count ?? 0),
+          cost: Number((category.spend as number | undefined) ?? category.cost ?? 0),
+          avg_utilization: Number(category.avg_utilization ?? 0),
+        };
+      })
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
     ),
 
   getTopSpend: (limit?: number) =>

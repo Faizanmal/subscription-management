@@ -2,8 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
+<<<<<<< HEAD
 // DEPRECATED: formforge API client was removed. Forms feature needs migration to /api/v1 endpoints.
 // import { formsApi, submissionsApi } from "@/lib/api-client";
+=======
+import { formsApi, submissionsApi } from "@/lib/formforge-services";
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
 import type { Form, FormField } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,13 +36,13 @@ export default function PublicFormPage() {
       // In production, this would be a public endpoint
       // For now, we'll fetch by slug (needs backend adjustment)
       const forms = await formsApi.list();
-      const foundForm = forms.find(f => f.slug === slug);
+      const foundForm = forms.find((f: Form) => f.slug === slug);
       
       if (foundForm) {
         setForm(foundForm);
         // Initialize visible fields
         const initialVisible = new Set<string>();
-        foundForm.schema_json.fields.forEach(field => {
+        foundForm.schema_json.fields.forEach((field: FormField) => {
           initialVisible.add(field.id);
         });
         setVisibleFields(initialVisible);
@@ -99,12 +103,18 @@ export default function PublicFormPage() {
   }, [form, formData]);
 
   useEffect(() => {
-    loadForm();
+    const timer = window.setTimeout(() => {
+      void loadForm();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadForm]);
 
   useEffect(() => {
     if (form) {
-      updateVisibleFields();
+      const timer = window.setTimeout(() => {
+        updateVisibleFields();
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [form, updateVisibleFields]);
 
@@ -128,9 +138,10 @@ export default function PublicFormPage() {
       toast.success(response.message || "Form submitted successfully!");
       
       // Redirect if specified
-      if (response.redirect && response.redirect !== '/thank-you') {
+      const redirect = response.redirect;
+      if (typeof redirect === 'string' && redirect !== '/thank-you') {
         setTimeout(() => {
-          window.location.href = response.redirect;
+          window.location.href = redirect;
         }, 2000);
       }
     } catch (error: unknown) {

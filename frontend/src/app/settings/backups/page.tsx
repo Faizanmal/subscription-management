@@ -83,11 +83,7 @@ export default function BackupsPage() {
     include_recommendations: false,
   });
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  async function loadData() {
     setIsLoading(true);
     try {
       const [schedulesData, backupsData, exportsData, importsData] = await Promise.all([
@@ -101,11 +97,17 @@ export default function BackupsPage() {
       setExports(exportsData);
       setImports(importsData);
     } catch (error) {
-      console.error('Failed to load backup data', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const handleCreateSchedule = async () => {
     try {
@@ -120,7 +122,6 @@ export default function BackupsPage() {
       });
       toast.success('Backup schedule created');
     } catch (error) {
-      console.error('Failed to create backup schedule', error);
       toast.error('Failed to create backup schedule');
     }
   };
@@ -131,7 +132,6 @@ export default function BackupsPage() {
       setSchedules(schedules.map((s) => (s.id === id ? updated : s)));
       toast.success(`Schedule ${isActive ? 'enabled' : 'disabled'}`);
     } catch (error) {
-      console.error('Failed to update schedule', error);
       toast.error('Failed to update schedule');
     }
   };
@@ -142,7 +142,6 @@ export default function BackupsPage() {
       setSchedules(schedules.filter((s) => s.id !== id));
       toast.success('Schedule deleted');
     } catch (error) {
-      console.error('Failed to delete schedule', error);
       toast.error('Failed to delete schedule');
     }
   };
@@ -173,7 +172,6 @@ export default function BackupsPage() {
       setShowExportDialog(false);
       toast.success('Export started');
     } catch (error) {
-      console.error('Failed to create export', error);
       toast.error('Failed to create export');
     }
   };
@@ -195,7 +193,6 @@ export default function BackupsPage() {
       setShowImportDialog(false);
       toast.success('Import started');
     } catch (error) {
-      console.error('Failed to start import', error);
       toast.error('Failed to start import');
     }
   };
@@ -205,7 +202,6 @@ export default function BackupsPage() {
       await backupsApi.restoreBackup(id);
       toast.success('Restore started');
     } catch (error) {
-      console.error('Failed to start restore', error);
       toast.error('Failed to start restore');
     }
   };

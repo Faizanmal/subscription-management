@@ -6,7 +6,10 @@ from django.test import TestCase, Client
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from users.models import Organization, Role
+<<<<<<< HEAD
 import json
+=======
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
 
 User = get_user_model()
 

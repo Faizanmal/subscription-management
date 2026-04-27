@@ -2,8 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+<<<<<<< HEAD
 // DEPRECATED: formforge API client was removed. Forms feature needs migration to /api/v1 endpoints.
 // import { formsApi } from "@/lib/api-client";
+=======
+import { formsApi } from "@/lib/formforge-services";
+>>>>>>> f2225d53a335250fd763dea989142daf386167f6
 import type { Form, FormField, FormSchema } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +42,10 @@ export default function FormEditorPage() {
   }, [formId, router]);
 
   useEffect(() => {
-    loadForm();
+    const timer = window.setTimeout(() => {
+      void loadForm();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadForm]);
 
   const handleSave = async () => {
