@@ -84,7 +84,7 @@ export function useWebSocket(
       try {
         const message = JSON.parse(event.data) as WebSocketMessage;
         onMessage?.(message);
-      } catch (error) {
+      } catch {
       }
     };
 

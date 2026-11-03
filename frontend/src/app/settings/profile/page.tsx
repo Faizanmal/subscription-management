@@ -168,9 +168,9 @@ export default function ProfilePage() {
     setIsSaving(true);
     try {
       await authApi.changePassword({
-        old_password: passwordForm.current_password,
+        current_password: passwordForm.current_password,
         new_password: passwordForm.new_password,
-        new_password2: passwordForm.confirm_password,
+        new_password_confirm: passwordForm.confirm_password,
       });
       setPasswordForm({
         current_password: '',

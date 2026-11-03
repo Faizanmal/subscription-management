@@ -95,7 +95,7 @@ export default function SubscriptionDetailPage() {
         setCosts(costsData);
         setRecommendations(recsData);
         setLicenses(licensesData);
-      } catch (error) {
+      } catch {
       }
     })();
 
@@ -150,6 +150,7 @@ export default function SubscriptionDetailPage() {
       cancelled: 'secondary',
       suspended: 'destructive',
       pending: 'outline',
+      inactive: 'secondary',
     };
     return (
       <Badge variant={variants[status]} className="capitalize">
@@ -390,7 +391,9 @@ export default function SubscriptionDetailPage() {
                           formatter={(value: unknown) =>
                             value !== undefined ? [Number(value), 'Active Users'] : ['N/A', 'Active Users']
                           }
-                          labelFormatter={(label) => formatDate(label)}
+                          labelFormatter={(label) =>
+                            formatDate(typeof label === 'string' ? label : String(label ?? ''))
+                          }
                         />
                         <Area
                           type="monotone"

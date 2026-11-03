@@ -13,29 +13,34 @@ class APIKeySerializer(serializers.ModelSerializer):
     """API Key serializer"""
     
     scope_display = serializers.CharField(source='get_scope_display', read_only=True)
-    key = serializers.CharField(read_only=True)
+    last_used_at = serializers.DateTimeField(source='last_used', read_only=True)
+    usage_count = serializers.IntegerField(source='total_requests', read_only=True)
+    rate_limit = serializers.IntegerField(source='rate_limit_per_hour', read_only=True)
     
     class Meta:
         model = APIKey
         fields = [
-            'id', 'organization', 'name', 'key', 'key_prefix',
+            'id', 'organization', 'name', 'key_prefix',
             'scope', 'scope_display', 'allowed_ips', 'rate_limit',
-            'expires_at', 'last_used_at', 'usage_count', 'is_active',
+            'rate_limit_per_hour', 'expires_at', 'last_used', 'last_used_at',
+            'total_requests', 'usage_count', 'is_active',
             'created_by', 'created_at'
         ]
-        read_only_fields = ['organization', 'key', 'key_prefix', 'last_used_at', 'usage_count', 'created_by', 'created_at']
+        read_only_fields = [
+            'organization', 'key_prefix', 'last_used', 'total_requests',
+            'created_by', 'created_at',
+        ]
 
 
 class APIKeyCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating API keys"""
     
-    key = serializers.CharField(read_only=True)
-    
+    key = serializers.CharField(read_only=True) 
     class Meta:
         model = APIKey
         fields = [
-            'id', 'name', 'scope', 'allowed_ips', 'rate_limit',
-            'expires_at', 'key'
+            'id', 'name', 'scope', 'allowed_ips',
+            'rate_limit_per_hour', 'expires_at', 'key'
         ]
     
     def create(self, validated_data):
@@ -63,34 +68,33 @@ class SecuritySettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = SecuritySetting
         fields = [
-            'id', 'organization', 'require_mfa', 'allowed_mfa_methods',
-            'password_min_length', 'password_require_uppercase',
-            'password_require_lowercase', 'password_require_number',
-            'password_require_special', 'password_expiry_days',
-            'session_timeout_minutes', 'max_sessions_per_user',
-            'ip_whitelist', 'ip_blacklist', 'require_ip_whitelist',
-            'failed_login_lockout_attempts', 'failed_login_lockout_duration_minutes',
-            'updated_at', 'updated_by'
+            'id', 'organization', 'require_mfa', 'mfa_methods',
+            'min_password_length', 'require_uppercase',
+            'require_lowercase', 'require_numbers',
+            'require_special_chars', 'password_expiry_days',
+            'session_timeout_minutes', 'max_concurrent_sessions',
+            'allowed_ips', 'blocked_ips',
+            'max_login_attempts', 'lockout_duration_minutes',
+            'updated_at',
         ]
-        read_only_fields = ['organization', 'updated_at', 'updated_by']
+        read_only_fields = ['organization', 'updated_at']
 
 
 class MFADeviceSerializer(serializers.ModelSerializer):
     """MFA device serializer"""
     
-    type_display = serializers.CharField(source='get_type_display', read_only=True)
+    type = serializers.CharField(source='device_type', read_only=True)
+    type_display = serializers.CharField(source='get_device_type_display', read_only=True)
+    last_used_at = serializers.DateTimeField(source='last_used', read_only=True)
     
     class Meta:
         model = MFADevice
         fields = [
-            'id', 'user', 'type', 'type_display', 'name',
+            'id', 'user', 'device_type', 'type', 'type_display', 'name',
             'phone_number', 'is_verified', 'is_primary',
-            'last_used_at', 'created_at'
+            'last_used', 'last_used_at', 'created_at'
         ]
-        read_only_fields = ['user', 'is_verified', 'last_used_at', 'created_at']
-        extra_kwargs = {
-            'secret_key': {'write_only': True}
-        }
+        read_only_fields = ['user', 'is_verified', 'last_used', 'created_at']
 
 
 class MFADeviceSetupSerializer(serializers.Serializer):
@@ -111,29 +115,37 @@ class MFAVerifySerializer(serializers.Serializer):
 class LoginAttemptSerializer(serializers.ModelSerializer):
     """Login attempt serializer"""
     
+    success = serializers.BooleanField(source='successful', read_only=True)
+    created_at = serializers.DateTimeField(source='timestamp', read_only=True)
+    
     class Meta:
         model = LoginAttempt
         fields = [
             'id', 'email', 'ip_address', 'user_agent',
-            'success', 'failure_reason', 'created_at'
+            'successful', 'success', 'failure_reason', 'timestamp', 'created_at'
         ]
-        read_only_fields = ['__all__']
+        read_only_fields = fields
 
 
 class SessionSerializer(serializers.ModelSerializer):
     """User session serializer"""
     
     is_current = serializers.SerializerMethodField()
+    last_activity_at = serializers.DateTimeField(source='last_activity', read_only=True)
+    device_type = serializers.SerializerMethodField()
     
     class Meta:
         model = Session
         fields = [
             'id', 'user', 'ip_address', 'user_agent',
-            'device_type', 'location', 'is_active',
-            'created_at', 'last_activity_at', 'expires_at',
+            'device_info', 'device_type', 'is_active',
+            'created_at', 'last_activity', 'last_activity_at', 'expires_at',
             'is_current'
         ]
-        read_only_fields = ['__all__']
+        read_only_fields = [
+            'id', 'user', 'ip_address', 'user_agent', 'device_info',
+            'is_active', 'created_at', 'last_activity', 'expires_at',
+        ]
     
     def get_is_current(self, obj):
         request = self.context.get('request')
@@ -141,20 +153,28 @@ class SessionSerializer(serializers.ModelSerializer):
             return str(obj.id) == str(request.session_id)
         return False
 
+    def get_device_type(self, obj):
+        if isinstance(obj.device_info, dict):
+            return obj.device_info.get('type') or obj.device_info.get('device') or ''
+        return ''
+
 
 class DataAccessLogSerializer(serializers.ModelSerializer):
     """Data access log serializer"""
     
-    action_display = serializers.CharField(source='get_action_display', read_only=True)
+    action = serializers.CharField(source='access_type', read_only=True)
+    action_display = serializers.CharField(source='get_access_type_display', read_only=True)
+    resource_details = serializers.JSONField(source='details', read_only=True)
+    created_at = serializers.DateTimeField(source='timestamp', read_only=True)
     
     class Meta:
         model = DataAccessLog
         fields = [
-            'id', 'user', 'action', 'action_display',
-            'resource_type', 'resource_id', 'resource_details',
-            'ip_address', 'user_agent', 'created_at'
+            'id', 'user', 'access_type', 'action', 'action_display',
+            'resource_type', 'resource_id', 'details', 'resource_details',
+            'ip_address', 'user_agent', 'timestamp', 'created_at'
         ]
-        read_only_fields = ['__all__']
+        read_only_fields = fields
 
 
 # Password validators

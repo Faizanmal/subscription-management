@@ -80,6 +80,12 @@ class Organization(models.Model):
         if self.trial_ends_at:
             return timezone.now() < self.trial_ends_at
         return False
+
+    @property
+    def has_pro_access(self):
+        """True when on a paid plan or an active trial."""
+        from users.plans import effective_plan
+        return effective_plan(self) in (self.PlanType.PRO, self.PlanType.ENTERPRISE)
     
     @property
     def is_enterprise(self):

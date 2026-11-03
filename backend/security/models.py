@@ -58,12 +58,17 @@ class APIKey(models.Model):
         return f"{self.name} ({self.key_prefix}...)"
     
     @classmethod
-    def generate_key(cls):
-        """Generate a new API key"""
-        key = secrets.token_urlsafe(32)
-        prefix = key[:8]
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        return key, prefix, key_hash
+    def generate_key(cls, **kwargs):
+        """Create an API key row and return (instance, raw_key)."""
+        raw_key = secrets.token_urlsafe(32)
+        prefix = raw_key[:8]
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+        instance = cls.objects.create(
+            key_prefix=prefix,
+            key_hash=key_hash,
+            **kwargs,
+        )
+        return instance, raw_key
     
     @classmethod
     def verify_key(cls, key):

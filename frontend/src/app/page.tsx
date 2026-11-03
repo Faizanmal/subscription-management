@@ -104,33 +104,35 @@ export default function LandingPage() {
 
   const pricingPlans = [
     {
-      name: 'Free',
+      name: 'Starter',
       price: '$0',
       period: 'forever',
-      description: 'For individuals and small teams',
+      description: 'Manual tracking for small teams',
       features: [
         'Up to 25 subscriptions',
+        '2 team seats',
         'Manual entry only',
-        'Basic analytics',
-        'Email alerts',
+        'Basic analytics & alerts',
       ],
       cta: 'Get Started',
+      href: '/register',
       highlighted: false,
     },
     {
       name: 'Pro',
       price: '$49',
       period: 'per month',
-      description: 'For growing companies',
+      description: '14-day trial included after signup',
       features: [
         'Up to 200 subscriptions',
-        'Auto-discovery',
+        '25 team seats',
+        'Google / Microsoft discovery',
         'AI recommendations',
-        'Bank feed integration',
-        'Team collaboration',
-        'Priority support',
+        'Plaid bank feeds',
+        'Automation workflows',
       ],
       cta: 'Start Free Trial',
+      href: '/register?plan=pro',
       highlighted: true,
     },
     {
@@ -139,14 +141,13 @@ export default function LandingPage() {
       period: 'contact us',
       description: 'For large organizations',
       features: [
-        'Unlimited subscriptions',
-        'SSO integration',
+        'Unlimited subscriptions & seats',
+        'SSO / Okta / Azure AD',
         'Custom workflows',
-        'API access',
-        'Dedicated CSM',
-        'SLA guarantee',
+        'Dedicated support',
       ],
       cta: 'Contact Sales',
+      href: 'mailto:sales@subscriptionwastemanager.com',
       highlighted: false,
     },
   ];
@@ -429,7 +430,11 @@ export default function LandingPage() {
                     variant={plan.highlighted ? 'default' : 'outline'}
                     asChild
                   >
-                    <Link href="/register">{plan.cta}</Link>
+                    {plan.href.startsWith('mailto:') ? (
+                      <a href={plan.href}>{plan.cta}</a>
+                    ) : (
+                      <Link href={plan.href}>{plan.cta}</Link>
+                    )}
                   </Button>
                 </CardContent>
               </Card>
@@ -498,10 +503,11 @@ export default function LandingPage() {
             <div>
               <h4 className="font-semibold mb-4">Legal</h4>
               <ul className="space-y-2 text-sm text-gray-500">
-                <li><a href="/privacy" className="hover:text-blue-600">Privacy Policy</a></li>
-                <li><a href="/terms" className="hover:text-blue-600">Terms of Service</a></li>
-                <li><a href="/security" className="hover:text-blue-600">Security</a></li>
-                <li><a href="/gdpr" className="hover:text-blue-600">GDPR</a></li>
+                <li><Link href="/privacy" className="hover:text-blue-600">Privacy Policy</Link></li>
+                <li><Link href="/terms" className="hover:text-blue-600">Terms of Service</Link></li>
+                <li><Link href="/security" className="hover:text-blue-600">Security</Link></li>
+                <li><Link href="/data" className="hover:text-blue-600">Your data</Link></li>
+                <li><Link href="/support" className="hover:text-blue-600">Support</Link></li>
               </ul>
             </div>
           </div>

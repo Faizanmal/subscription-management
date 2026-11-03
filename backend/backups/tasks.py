@@ -278,9 +278,9 @@ def run_data_export(self, export_id):
     try:
         export = DataExport.objects.get(id=export_id)
         
-        export.status = 'processing'
+        export.status = DataExport.Status.PROCESSING
         export.started_at = timezone.now()
-        export.save()
+        export.save(update_fields=['status', 'started_at'])
         
         try:
             org = export.organization
@@ -295,18 +295,18 @@ def run_data_export(self, export_id):
             # Generate file
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
             
-            if export.format == 'json':
+            if export.format == DataExport.Format.JSON:
                 filename = f"export_{timestamp}.json"
                 filepath = os.path.join(export_dir, filename)
                 with open(filepath, 'w') as f:
                     json.dump(data, f, indent=2, default=str)
             
-            elif export.format == 'csv':
+            elif export.format == DataExport.Format.CSV:
                 filename = f"export_{timestamp}.zip"
                 filepath = os.path.join(export_dir, filename)
                 create_csv_export(data, filepath)
             
-            elif export.format == 'xlsx':
+            elif export.format == DataExport.Format.EXCEL:
                 filename = f"export_{timestamp}.xlsx"
                 filepath = os.path.join(export_dir, filename)
                 create_excel_export(data, filepath)
@@ -315,30 +315,37 @@ def run_data_export(self, export_id):
                 raise ValueError(f"Unsupported format: {export.format}")
             
             # Update export record
-            export.status = 'completed'
+            export.status = DataExport.Status.COMPLETED
             export.completed_at = timezone.now()
             export.file_path = filepath
             export.file_size = os.path.getsize(filepath)
-            export.expires_at = timezone.now() + timezone.timedelta(days=7)
+            export.download_expires_at = timezone.now() + timezone.timedelta(days=7)
+            export.records_exported = sum(
+                len(rows) if isinstance(rows, list) else 0
+                for rows in data.values()
+            )
+            export.progress = 100
             export.save()
             
             # Notify user
-            from users.models import Notification
-            Notification.objects.create(
-                user=export.requested_by,
-                type='export',
-                title='Data export ready',
-                message='Your data export is ready for download.',
-                action_url=f'/exports/{export.id}/download'
-            )
+            if export.requested_by_id:
+                from users.models import Notification
+                Notification.objects.create(
+                    user=export.requested_by,
+                    organization=export.organization,
+                    type=Notification.NotificationType.SYSTEM,
+                    title='Data export ready',
+                    message='Your data export is ready for download.',
+                    action_url=f'/settings/backups?export={export.id}',
+                )
             
             logger.info(f"Export completed: {filepath}")
             
         except Exception as e:
-            export.status = 'failed'
+            export.status = DataExport.Status.FAILED
             export.error_message = str(e)
             export.completed_at = timezone.now()
-            export.save()
+            export.save(update_fields=['status', 'error_message', 'completed_at'])
             raise
         
     except DataExport.DoesNotExist:
@@ -495,14 +502,16 @@ def run_import_job(self, import_job_id):
             os.remove(temp_path)
             
             # Notify user
-            from users.models import Notification
-            Notification.objects.create(
-                user=job.uploaded_by,
-                type='import',
-                title='Import completed',
-                message=f'Imported {result["success"]} of {result["total"]} records.',
-                action_url=f'/imports/{job.id}'
-            )
+            if job.initiated_by_id:
+                from users.models import Notification
+                Notification.objects.create(
+                    user=job.initiated_by,
+                    organization=job.organization,
+                    type=Notification.NotificationType.SYSTEM,
+                    title='Import completed',
+                    message=f'Imported {result["success"]} of {result["total"]} records.',
+                    action_url=f'/settings/backups?import={job.id}',
+                )
             
             logger.info(f"Import completed: {result}")
             
@@ -685,7 +694,7 @@ def cleanup_old_data(organization_id):
         # Expired exports
         deleted_exports, _ = DataExport.objects.filter(
             organization=org,
-            expires_at__lt=timezone.now()
+            download_expires_at__lt=timezone.now()
         ).delete()
         
         logger.info(

@@ -2,7 +2,31 @@
 Social auth pipeline for users app
 """
 
-from users.models import Organization, Role
+from users.models import Organization, Role, User
+
+
+def get_or_create_user(strategy, details, backend, user=None, *args, **kwargs):
+    """Create or reuse a local user from social-auth details (email is the username)."""
+    if user:
+        return {'is_new': False}
+
+    email = (details.get('email') or '').strip().lower()
+    if not email:
+        return None
+
+    existing = User.objects.filter(email__iexact=email).first()
+    if existing:
+        return {'is_new': False, 'user': existing}
+
+    new_user = User.objects.create_user(
+        email=email,
+        password=None,
+        first_name=details.get('first_name') or '',
+        last_name=details.get('last_name') or '',
+    )
+    new_user.set_unusable_password()
+    new_user.save(update_fields=['password'])
+    return {'is_new': True, 'user': new_user}
 
 
 def save_organization_info(backend, user, response, *args, **kwargs):
@@ -34,7 +58,7 @@ def save_organization_info(backend, user, response, *args, **kwargs):
         
         user.save()
     
-    elif backend.name == 'azuread-oauth2':
+    elif backend.name in ('azuread-oauth2', 'microsoft-graph', 'microsoft-oauth2'):
         # Microsoft login
         email = response.get('mail') or response.get('userPrincipalName', '')
         domain = email.split('@')[1] if '@' in email else None
@@ -61,29 +85,22 @@ def assign_default_role(backend, user, is_new, *args, **kwargs):
     Pipeline step to assign default role to new users.
     """
     if is_new and user.organization and not user.role:
-        # Get default role for organization
-        try:
-            default_role = Role.objects.get(
-                organization=user.organization,
-                type=Role.RoleType.EMPLOYEE,
-                is_default=True
-            )
-            user.role = default_role
-            user.save()
-        except Role.DoesNotExist:
-            # Create default employee role if doesn't exist
+        default_role = Role.objects.filter(
+            organization=user.organization,
+            type=Role.RoleType.MEMBER,
+        ).first()
+        if default_role is None:
             default_role = Role.objects.create(
                 organization=user.organization,
-                name='Employee',
-                type=Role.RoleType.EMPLOYEE,
+                name='Member',
+                type=Role.RoleType.MEMBER,
                 permissions={
                     'view_subscriptions': True,
                     'view_usage': True
                 },
-                is_default=True
             )
-            user.role = default_role
-            user.save()
+        user.role = default_role
+        user.save(update_fields=['role'])
 
 
 def check_sso_connection(backend, user, response, *args, **kwargs):
@@ -92,7 +109,7 @@ def check_sso_connection(backend, user, response, *args, **kwargs):
     """
     from integrations.models import SSOConnection
     
-    if backend.name in ['google-oauth2', 'azuread-oauth2']:
+    if backend.name in ['google-oauth2', 'azuread-oauth2', 'microsoft-graph', 'microsoft-oauth2']:
         email = response.get('email', '') or response.get('mail', '')
         domain = email.split('@')[1] if '@' in email else None
         

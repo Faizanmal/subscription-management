@@ -2,6 +2,9 @@
 Services serializers for Subscription Waste Manager
 """
 
+from datetime import date, datetime
+from decimal import Decimal
+
 from rest_framework import serializers
 from services.models import (
     SoftwareVendor, Subscription, SubscriptionUser,
@@ -11,6 +14,64 @@ from services.models import (
     SavingsReport, BudgetTarget,
     AutomationWorkflow, WorkflowExecution,
 )
+
+
+BILLING_CYCLE_ALIASES = {
+    'one_time': 'custom',
+    'usage_based': 'custom',
+}
+
+
+def coerce_date(value):
+    """Accept YYYY-MM-DD or ISO datetimes from the frontend date picker."""
+    if value in (None, ''):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and 'T' in value:
+        return value.split('T')[0]
+    return value
+
+
+class SubscriptionWriteMixin:
+    """Map frontend field names onto the Subscription model."""
+
+    def to_internal_value(self, data):
+        payload = data.copy() if hasattr(data, 'copy') else dict(data)
+        payload = dict(payload)
+
+        if not payload.get('vendor') and payload.get('vendor_id'):
+            payload['vendor'] = payload['vendor_id']
+        if not payload.get('owner') and payload.get('owner_id'):
+            payload['owner'] = payload['owner_id']
+        if payload.get('used_licenses') in (None, '') and payload.get('assigned_licenses') not in (None, ''):
+            payload['used_licenses'] = payload['assigned_licenses']
+
+        for key in ('start_date', 'end_date', 'renewal_date'):
+            if payload.get(key):
+                payload[key] = coerce_date(payload[key])
+
+        cycle = payload.get('billing_cycle')
+        if cycle in BILLING_CYCLE_ALIASES:
+            payload['billing_cycle'] = BILLING_CYCLE_ALIASES[cycle]
+
+        monthly = payload.get('monthly_cost')
+        if monthly not in (None, ''):
+            licenses = payload.get('total_licenses')
+            try:
+                licenses = int(licenses) if licenses not in (None, '') else None
+            except (TypeError, ValueError):
+                licenses = None
+            if licenses is None and getattr(self, 'instance', None):
+                licenses = self.instance.total_licenses
+            licenses = licenses or 1
+            payload['cost_per_unit'] = (
+                Decimal(str(monthly)) / Decimal(licenses)
+            ).quantize(Decimal('0.01'))
+
+        return super().to_internal_value(payload)
 
 
 class SoftwareVendorSerializer(serializers.ModelSerializer):
@@ -26,16 +87,19 @@ class SoftwareVendorSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'slug', 'is_verified', 'created_at', 'updated_at']
 
 
-class SubscriptionSerializer(serializers.ModelSerializer):
+class SubscriptionSerializer(SubscriptionWriteMixin, serializers.ModelSerializer):
     """Subscription serializer"""
     
-    vendor_name = serializers.CharField(source='vendor.name', read_only=True)
-    vendor_logo = serializers.URLField(source='vendor.logo', read_only=True)
-    owner_name = serializers.CharField(source='owner.full_name', read_only=True)
-    department_name = serializers.CharField(source='department.name', read_only=True)
-    team_name = serializers.CharField(source='team.name', read_only=True)
+    vendor_id = serializers.UUIDField(read_only=True, allow_null=True)
+    vendor_name = serializers.CharField(source='vendor.name', read_only=True, allow_null=True)
+    vendor_logo = serializers.CharField(source='vendor.logo', read_only=True, allow_null=True, allow_blank=True)
+    owner_id = serializers.UUIDField(read_only=True, allow_null=True)
+    owner_name = serializers.CharField(source='owner.full_name', read_only=True, allow_null=True)
+    department_name = serializers.CharField(source='department.name', read_only=True, allow_null=True)
+    team_name = serializers.CharField(source='team.name', read_only=True, allow_null=True)
     monthly_cost = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     annual_cost = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    assigned_licenses = serializers.IntegerField(source='used_licenses', read_only=True)
     unused_licenses = serializers.IntegerField(read_only=True)
     utilization_rate = serializers.FloatField(read_only=True)
     days_until_renewal = serializers.IntegerField(read_only=True)
@@ -43,12 +107,13 @@ class SubscriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Subscription
         fields = [
-            'id', 'name', 'description', 'vendor', 'vendor_name', 'vendor_logo',
+            'id', 'name', 'description', 'vendor', 'vendor_id', 'vendor_name', 'vendor_logo',
             'status', 'discovery_source', 'is_shadow_it', 'custom_category',
-            'owner', 'owner_name', 'department', 'department_name', 'team', 'team_name',
+            'owner', 'owner_id', 'owner_name', 'department', 'department_name', 'team', 'team_name',
             'cost_per_unit', 'currency', 'billing_cycle',
             'monthly_cost', 'annual_cost',
-            'total_licenses', 'used_licenses', 'unused_licenses', 'utilization_rate',
+            'total_licenses', 'used_licenses', 'assigned_licenses', 'unused_licenses',
+            'utilization_rate',
             'start_date', 'end_date', 'renewal_date', 'auto_renew', 'days_until_renewal',
             'contract_id', 'contract_document', 'terms',
             'external_id', 'login_url', 'admin_url',
@@ -58,16 +123,16 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class SubscriptionCreateSerializer(serializers.ModelSerializer):
+class SubscriptionCreateSerializer(SubscriptionWriteMixin, serializers.ModelSerializer):
     """Serializer for creating subscriptions"""
     
     class Meta:
         model = Subscription
         fields = [
-            'name', 'description', 'vendor', 'custom_category',
+            'name', 'description', 'vendor', 'custom_category', 'status',
             'owner', 'department', 'team',
             'cost_per_unit', 'currency', 'billing_cycle',
-            'total_licenses',
+            'total_licenses', 'used_licenses',
             'start_date', 'end_date', 'renewal_date', 'auto_renew',
             'contract_id', 'contract_document', 'terms',
             'login_url', 'admin_url', 'tags', 'notes'
@@ -78,14 +143,18 @@ class SubscriptionCreateSerializer(serializers.ModelSerializer):
         validated_data['discovery_source'] = 'manual'
         return super().create(validated_data)
 
+    def to_representation(self, instance):
+        return SubscriptionSerializer(instance, context=self.context).data
+
 
 class SubscriptionListSerializer(serializers.ModelSerializer):
     """Lightweight subscription serializer for lists"""
     
-    vendor_name = serializers.CharField(source='vendor.name', read_only=True)
-    vendor_logo = serializers.URLField(source='vendor.logo', read_only=True)
-    department_name = serializers.CharField(source='department.name', read_only=True)
+    vendor_name = serializers.CharField(source='vendor.name', read_only=True, allow_null=True)
+    vendor_logo = serializers.CharField(source='vendor.logo', read_only=True, allow_null=True, allow_blank=True)
+    department_name = serializers.CharField(source='department.name', read_only=True, allow_null=True)
     monthly_cost = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    assigned_licenses = serializers.IntegerField(source='used_licenses', read_only=True)
     utilization_rate = serializers.FloatField(read_only=True)
     days_until_renewal = serializers.IntegerField(read_only=True)
     
@@ -94,7 +163,7 @@ class SubscriptionListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'vendor_name', 'vendor_logo', 'status',
             'department_name', 'monthly_cost', 'currency',
-            'total_licenses', 'used_licenses', 'utilization_rate',
+            'total_licenses', 'used_licenses', 'assigned_licenses', 'utilization_rate',
             'renewal_date', 'days_until_renewal', 'is_shadow_it'
         ]
 

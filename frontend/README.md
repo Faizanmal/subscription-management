@@ -16,6 +16,10 @@ This Next.js application provides the user interface for managing subscriptions,
 - AI-powered recommendation system
 - Real-time notifications
 
+## Docker
+
+From the repo root: `docker compose up --build`. The UI is at http://localhost:3000.
+
 ## Getting Started
 
 ### Prerequisites
@@ -66,11 +70,15 @@ This Next.js application provides the user interface for managing subscriptions,
 
 ## Available Scripts
 
-- `npm run dev` - Start development server
+- `npm run dev` - Start development server (runs a JS-config integrity check first)
 - `npm run build` - Build for production
 - `npm run start` - Start production server
 - `npm run lint` - Run ESLint
 - `npm run type-check` - Run TypeScript type checking
+- `npm run guard` - Scan frontend JS configs for dropper/malware patterns without starting Next
+- `npm run test:guard` - Unit tests for the config integrity guard
+
+Use `npm run dev` / `npm run build`, not `npx next dev`. The npm scripts refuse to start Next if a pull/merge restored an infected `postcss.config.*` or similar config. `next.config.ts` runs the same check if Next is launched directly.
 
 ## Contributing
 

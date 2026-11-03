@@ -2,11 +2,7 @@
 Tests for API permissions and exception handling
 """
 
-<<<<<<< HEAD
-from django.test import TestCase, Client
-=======
 from django.test import TestCase
->>>>>>> f2225d53a335250fd763dea989142daf386167f6
 from django.contrib.auth import get_user_model
 from users.models import Organization, Role
 from api.permissions import IsAdmin, IsFinance, IsOrgMember
@@ -122,3 +118,13 @@ class PermissionTestCase(TestCase):
         
         self.assertTrue(permission.has_permission(MockRequest(member), None))
         self.assertFalse(permission.has_permission(MockRequest(no_org_user), None))
+
+
+class HealthCheckTestCase(TestCase):
+    def test_health_endpoint_is_public(self):
+        from django.test import Client
+        from django.urls import reverse
+
+        response = Client().get(reverse('health'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['status'], 'ok')

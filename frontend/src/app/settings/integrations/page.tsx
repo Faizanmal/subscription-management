@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { useIntegrationsStore } from '@/lib/stores';
-import { integrationsApi } from '@/lib/services';
+import { integrationsApi, organizationApi } from '@/lib/services';
+import { PlanUpgradeCard } from '@/components/plan-upgrade-card';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,15 +40,18 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import type { BankAccount, SSOConnection, Webhook } from '@/types/swm';
+import { openPlaidLink } from '@/lib/plaid-link';
+import { hardNavigate } from '@/lib/navigation';
+import type { BankAccount, BillingStatus, EmailScanConfig, SSOConnection, Webhook } from '@/types/swm';
 
 const INTEGRATION_ICONS: Record<string, React.ReactNode> = {
   plaid: <CreditCard className="h-6 w-6" />,
   slack: <MessageSquare className="h-6 w-6" />,
   teams: <MessageSquare className="h-6 w-6" />,
-  google: <Mail className="h-6 w-6" />,
-  microsoft: <Mail className="h-6 w-6" />,
+  google_workspace: <Mail className="h-6 w-6" />,
+  microsoft_365: <Mail className="h-6 w-6" />,
   okta: <Key className="h-6 w-6" />,
+  azure_ad: <Key className="h-6 w-6" />,
   quickbooks: <CreditCard className="h-6 w-6" />,
   xero: <CreditCard className="h-6 w-6" />,
 };
@@ -56,6 +60,7 @@ const STATUS_COLORS: Record<string, string> = {
   active: 'bg-green-100 text-green-700',
   connected: 'bg-green-100 text-green-700',
   pending: 'bg-yellow-100 text-yellow-700',
+  expired: 'bg-red-100 text-red-700',
   error: 'bg-red-100 text-red-700',
   disabled: 'bg-gray-100 text-gray-700',
 };
@@ -69,55 +74,141 @@ export default function IntegrationsPage() {
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [showWebhookDialog, setShowWebhookDialog] = useState(false);
   const [webhookForm, setWebhookForm] = useState({ url: '', events: [] as string[] });
+  const [emailScans, setEmailScans] = useState<EmailScanConfig[]>([]);
+  const [activeTab, setActiveTab] = useState('connected');
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [connectingType, setConnectingType] = useState<string | null>(null);
+  const [connectDialog, setConnectDialog] = useState<'slack' | 'teams' | 'okta' | 'azure_ad' | null>(null);
+  const [connectForm, setConnectForm] = useState({
+    webhook_url: '',
+    channel_name: 'alerts',
+    domain: '',
+    api_token: '',
+    tenant_id: '',
+    client_id: '',
+    client_secret: '',
+  });
+
+  const apiError = (error: unknown, fallback: string) => {
+    const err = error as {
+      response?: { status?: number; data?: { error?: string; detail?: string; code?: string; upgrade_url?: string } };
+      message?: string;
+    };
+    if (err.response?.data?.code === 'plan_upgrade_required' || err.response?.status === 402) {
+      return err.response?.data?.error || 'This feature requires Pro. Open Billing to upgrade.';
+    }
+    return err.response?.data?.error || err.response?.data?.detail || err.message || fallback;
+  };
+
+  const handlePlanGate = (error: unknown) => {
+    const err = error as { response?: { status?: number; data?: { code?: string; upgrade_url?: string; error?: string } } };
+    if (err.response?.data?.code === 'plan_upgrade_required' || err.response?.status === 402) {
+      toast.error(err.response?.data?.error || 'Upgrade required', {
+        action: {
+          label: 'Billing',
+          onClick: () => hardNavigate(err.response?.data?.upgrade_url || '/settings/billing'),
+        },
+      });
+      return true;
+    }
+    return false;
+  };
+
+  const isConnectedStatus = (status?: string) =>
+    status === 'active' || status === 'connected';
 
   const loadData = async () => {
     await fetchIntegrations();
     try {
-      const [banks, sso, hooks] = await Promise.all([
+      const [banks, sso, hooks, scans, billingStatus] = await Promise.all([
         integrationsApi.listBankAccounts(),
         integrationsApi.listSSOConnections(),
         integrationsApi.listWebhooks(),
+        integrationsApi.listEmailScans(),
+        organizationApi.getBilling().catch(() => null),
       ]);
       setBankAccounts(Array.isArray(banks) ? banks : banks.results || []);
       setSSOConnections(Array.isArray(sso) ? sso : sso.results || []);
       setWebhooks(Array.isArray(hooks) ? hooks : hooks.results || []);
-    } catch (error) {
+      setEmailScans(scans);
+      if (billingStatus) setBilling(billingStatus);
+    } catch {
+      // Optional tabs should not block the main integrations list.
     }
   };
 
   useEffect(() => {
-    const load = async () => {
-      await fetchIntegrations();
-      try {
-        const [banks, sso, hooks] = await Promise.all([
-          integrationsApi.listBankAccounts(),
-          integrationsApi.listSSOConnections(),
-          integrationsApi.listWebhooks(),
-        ]);
-        setBankAccounts(Array.isArray(banks) ? banks : banks.results || []);
-        setSSOConnections(Array.isArray(sso) ? sso : sso.results || []);
-        setWebhooks(Array.isArray(hooks) ? hooks : hooks.results || []);
-      } catch (error) {
+    const timeoutId = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'integration-oauth-success') {
+        toast.success('Integration connected');
+        void loadData();
+      } else if (event.data?.type === 'integration-oauth-error') {
+        toast.error(event.data.error || 'OAuth connection failed');
       }
     };
-    load();
+    window.addEventListener('message', onMessage);
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected')) {
+      toast.success('Integration connected');
+      window.history.replaceState({}, '', '/settings/integrations');
+    } else if (params.get('error')) {
+      toast.error(params.get('error') || 'OAuth connection failed');
+      window.history.replaceState({}, '', '/settings/integrations');
+    }
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('message', onMessage);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchIntegrations]);
 
+  const openOAuthPopup = (authUrl: string) => {
+    const popup = window.open(authUrl, 'swm-oauth', 'width=520,height=720,scrollbars=yes');
+    if (!popup) {
+      hardNavigate(authUrl);
+    }
+  };
+
   const handleConnect = async (type: string) => {
+    setConnectingType(type);
     try {
-      // In production, this would redirect to OAuth flow
-      toast.info(`Connecting to ${type}...`);
       if (type === 'plaid') {
-        // const { link_token } = await integrationsApi.createPlaidLink();
-        // Would open Plaid Link here
-        toast.success('Bank connection initiated');
-      } else if (type === 'slack') {
-        await integrationsApi.connectSlack('workspace-id');
-        toast.success('Slack connected');
-        loadData();
+        const { link_token } = await integrationsApi.createPlaidLink();
+        const publicToken = await openPlaidLink(link_token);
+        await integrationsApi.exchangePlaidToken(publicToken);
+        toast.success('Bank account connected');
+        await loadData();
+        return;
       }
-    } catch {
-      toast.error('Failed to connect integration');
+      if (type === 'slack' || type === 'teams' || type === 'okta' || type === 'azure_ad') {
+        setConnectForm({
+          webhook_url: '',
+          channel_name: 'alerts',
+          domain: '',
+          api_token: '',
+          tenant_id: '',
+          client_id: '',
+          client_secret: '',
+        });
+        setConnectDialog(type as 'slack' | 'teams' | 'okta' | 'azure_ad');
+        return;
+      }
+      const { auth_url } = await integrationsApi.getProviderAuthUrl(type);
+      openOAuthPopup(auth_url);
+      return;
+    } catch (error) {
+      if (!handlePlanGate(error)) {
+        toast.error(apiError(error, 'Failed to connect integration'));
+      }
+    } finally {
+      setConnectingType(null);
     }
   };
 
@@ -136,6 +227,47 @@ export default function IntegrationsPage() {
     toast.success('Sync started');
   };
 
+  const submitConnectDialog = async () => {
+    if (!connectDialog) return;
+    setConnectingType(connectDialog);
+    try {
+      if (connectDialog === 'slack') {
+        await integrationsApi.connectSlack({
+          webhook_url: connectForm.webhook_url,
+          channel_name: connectForm.channel_name,
+        });
+        toast.success('Slack connected');
+      } else if (connectDialog === 'teams') {
+        // Need to cast to any since we haven't updated services.ts yet
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (integrationsApi as any).connectTeams({
+          webhook_url: connectForm.webhook_url,
+          channel_name: connectForm.channel_name,
+        });
+        toast.success('Teams connected');
+      } else if (connectDialog === 'okta') {
+        await integrationsApi.connectOkta({
+          domain: connectForm.domain,
+          api_token: connectForm.api_token,
+        });
+        toast.success('Okta connected');
+      } else {
+        await integrationsApi.connectAzureAd({
+          tenant_id: connectForm.tenant_id,
+          client_id: connectForm.client_id,
+          client_secret: connectForm.client_secret,
+        });
+        toast.success('Azure AD connected');
+      }
+      setConnectDialog(null);
+      await loadData();
+    } catch (error) {
+      toast.error(apiError(error, 'Failed to connect integration'));
+    } finally {
+      setConnectingType(null);
+    }
+  };
+
   const handleCreateWebhook = async () => {
     try {
       const webhook = await integrationsApi.createWebhook({
@@ -147,7 +279,7 @@ export default function IntegrationsPage() {
       setShowWebhookDialog(false);
       setWebhookForm({ url: '', events: [] });
       toast.success('Webhook created');
-    } catch (error) {
+    } catch {
       toast.error('Failed to create webhook');
     }
   };
@@ -157,12 +289,24 @@ export default function IntegrationsPage() {
       await integrationsApi.deleteWebhook(id);
       setWebhooks(webhooks.filter((w) => w.id !== id));
       toast.success('Webhook deleted');
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete webhook');
     }
   };
 
-  const availableIntegrations = [
+  const availableIntegrations: Array<{ type: string; name: string; description: string; category: string; comingSoon?: boolean }> = [
+    {
+      type: 'google_workspace',
+      name: 'Google Workspace',
+      description: 'Discover Gmail receipts and Workspace app usage',
+      category: 'discovery',
+    },
+    {
+      type: 'microsoft_365',
+      name: 'Microsoft 365',
+      description: 'Discover Outlook receipts and Microsoft 365 usage',
+      category: 'discovery',
+    },
     {
       type: 'plaid',
       name: 'Plaid',
@@ -172,7 +316,7 @@ export default function IntegrationsPage() {
     {
       type: 'slack',
       name: 'Slack',
-      description: 'Get notifications and alerts in Slack channels',
+      description: 'Post alerts to a Slack channel via incoming webhook',
       category: 'communication',
     },
     {
@@ -184,26 +328,98 @@ export default function IntegrationsPage() {
     {
       type: 'okta',
       name: 'Okta SSO',
-      description: 'Sync users and discover SSO-connected apps',
+      description: 'Sync assigned apps from Okta',
       category: 'sso',
     },
     {
-      type: 'google',
-      name: 'Google Workspace',
-      description: 'Discover Google Workspace app usage',
+      type: 'azure_ad',
+      name: 'Azure AD',
+      description: 'Discover enterprise apps from Azure Active Directory',
       category: 'sso',
+    },
+    {
+      type: 'onelogin',
+      name: 'OneLogin',
+      description: 'Sync assigned apps from OneLogin',
+      category: 'sso',
+      comingSoon: true,
+    },
+    {
+      type: 'jumpcloud',
+      name: 'JumpCloud',
+      description: 'Sync assigned apps from JumpCloud',
+      category: 'sso',
+      comingSoon: true,
     },
     {
       type: 'quickbooks',
       name: 'QuickBooks',
       description: 'Sync subscription expenses with accounting',
       category: 'accounting',
+      comingSoon: true,
     },
     {
       type: 'xero',
       name: 'Xero',
       description: 'Sync subscription expenses with Xero',
       category: 'accounting',
+      comingSoon: true,
+    },
+    {
+      type: 'workday',
+      name: 'Workday',
+      description: 'Sync employee departments and managers',
+      category: 'hr',
+      comingSoon: true,
+    },
+    {
+      type: 'bamboohr',
+      name: 'BambooHR',
+      description: 'Sync employee profiles',
+      category: 'hr',
+      comingSoon: true,
+    },
+    {
+      type: 'gusto',
+      name: 'Gusto',
+      description: 'Sync payroll and employee data',
+      category: 'hr',
+      comingSoon: true,
+    },
+    {
+      type: 'rippling',
+      name: 'Rippling',
+      description: 'Sync employee data',
+      category: 'hr',
+      comingSoon: true,
+    },
+    {
+      type: 'concur',
+      name: 'SAP Concur',
+      description: 'Sync expense reports',
+      category: 'finance',
+      comingSoon: true,
+    },
+    {
+      type: 'expensify',
+      name: 'Expensify',
+      description: 'Sync expenses',
+      category: 'finance',
+      comingSoon: true,
+    },
+    {
+      type: 'brex',
+      name: 'Brex',
+      description: 'Sync corporate cards and transactions',
+      category: 'finance',
+      comingSoon: true,
+    },
+    {
+      type: 'ramp',
+      name: 'Ramp',
+      description: 'Sync virtual cards',
+      category: 'finance',
+      comingSoon: true,
     },
   ];
 
@@ -238,13 +454,127 @@ export default function IntegrationsPage() {
           </div>
         </div>
 
+        {billing && !billing.has_pro_access && !billing.is_on_trial && (
+          <PlanUpgradeCard
+            title="Discovery connectors need Pro"
+            description="Google Workspace, Microsoft 365, Okta, Azure AD, and Plaid require Pro or an active trial. Slack, Teams, and webhooks stay available on Starter."
+          />
+        )}
+
+        <Dialog open={connectDialog !== null} onOpenChange={(open) => !open && setConnectDialog(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {connectDialog === 'slack' && 'Connect Slack'}
+                {connectDialog === 'teams' && 'Connect Teams'}
+                {connectDialog === 'okta' && 'Connect Okta'}
+                {connectDialog === 'azure_ad' && 'Connect Azure AD'}
+              </DialogTitle>
+              <DialogDescription>
+                {connectDialog === 'slack' &&
+                  'Paste an incoming webhook URL from Slack (Apps → Incoming Webhooks).'}
+                {connectDialog === 'teams' &&
+                  'Paste an incoming webhook URL from Microsoft Teams.'}
+                {connectDialog === 'okta' &&
+                  'Use your Okta domain and an API token with app read access.'}
+                {connectDialog === 'azure_ad' &&
+                  'Use an app registration with Application.Read.All (application permission).'}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              {(connectDialog === 'slack' || connectDialog === 'teams') && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="webhook-url">Webhook URL</Label>
+                    <Input
+                      id="webhook-url"
+                      type="url"
+                      placeholder="https://..."
+                      value={connectForm.webhook_url}
+                      onChange={(e) => setConnectForm({ ...connectForm, webhook_url: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="channel">Channel name</Label>
+                    <Input
+                      id="channel"
+                      placeholder="alerts"
+                      value={connectForm.channel_name}
+                      onChange={(e) => setConnectForm({ ...connectForm, channel_name: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
+              {connectDialog === 'okta' && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="okta-domain">Okta domain</Label>
+                    <Input
+                      id="okta-domain"
+                      placeholder="company.okta.com"
+                      value={connectForm.domain}
+                      onChange={(e) => setConnectForm({ ...connectForm, domain: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="okta-token">API token</Label>
+                    <Input
+                      id="okta-token"
+                      type="password"
+                      value={connectForm.api_token}
+                      onChange={(e) => setConnectForm({ ...connectForm, api_token: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
+              {connectDialog === 'azure_ad' && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="azure-tenant">Tenant ID</Label>
+                    <Input
+                      id="azure-tenant"
+                      value={connectForm.tenant_id}
+                      onChange={(e) => setConnectForm({ ...connectForm, tenant_id: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="azure-client">Client ID</Label>
+                    <Input
+                      id="azure-client"
+                      value={connectForm.client_id}
+                      onChange={(e) => setConnectForm({ ...connectForm, client_id: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="azure-secret">Client secret</Label>
+                    <Input
+                      id="azure-secret"
+                      type="password"
+                      value={connectForm.client_secret}
+                      onChange={(e) => setConnectForm({ ...connectForm, client_secret: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConnectDialog(null)}>
+                Cancel
+              </Button>
+              <Button onClick={submitConnectDialog} disabled={Boolean(connectingType)}>
+                {connectingType ? 'Connecting...' : 'Connect'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Connected Summary */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>Connected</CardDescription>
               <CardTitle className="text-3xl text-green-600">
-                {integrations.filter((i) => i.status === 'active').length}
+                {integrations.filter((i) => isConnectedStatus(i.status)).length}
               </CardTitle>
             </CardHeader>
           </Card>
@@ -269,10 +599,11 @@ export default function IntegrationsPage() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="connected">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="connected">Connected</TabsTrigger>
             <TabsTrigger value="available">Available</TabsTrigger>
+            <TabsTrigger value="email">Email scan</TabsTrigger>
             <TabsTrigger value="banking">Bank Accounts</TabsTrigger>
             <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
           </TabsList>
@@ -286,6 +617,10 @@ export default function IntegrationsPage() {
                   <p className="text-gray-500 mb-4">
                     Connect your first integration to get started
                   </p>
+                  <Button onClick={() => setActiveTab('available')}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Browse connectors
+                  </Button>
                 </CardContent>
               </Card>
             ) : (
@@ -309,7 +644,7 @@ export default function IntegrationsPage() {
                           </div>
                         </div>
                         <Badge className={STATUS_COLORS[integration.status]}>
-                          {integration.status === 'active' && (
+                          {isConnectedStatus(integration.status) && (
                             <CheckCircle className="h-3 w-3 mr-1" />
                           )}
                           {integration.status === 'error' && (
@@ -363,8 +698,9 @@ export default function IntegrationsPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {availableIntegrations.map((integration) => {
                 const isConnected = integrations.some(
-                  (i) => i.type === integration.type && i.status === 'active'
+                  (i) => i.type === integration.type && isConnectedStatus(i.status)
                 );
+                const comingSoon = Boolean(integration.comingSoon);
                 return (
                   <Card key={integration.type} className="hover:shadow-md transition-shadow">
                     <CardHeader>
@@ -377,7 +713,7 @@ export default function IntegrationsPage() {
                         <div>
                           <CardTitle className="text-lg">{integration.name}</CardTitle>
                           <Badge variant="outline" className="mt-1">
-                            {integration.category}
+                            {comingSoon ? 'coming soon' : integration.category}
                           </Badge>
                         </div>
                       </div>
@@ -386,11 +722,13 @@ export default function IntegrationsPage() {
                       <p className="text-sm text-gray-500">{integration.description}</p>
                       <Button
                         className="w-full"
-                        variant={isConnected ? 'secondary' : 'default'}
-                        disabled={isConnected}
+                        variant={isConnected || comingSoon ? 'secondary' : 'default'}
+                        disabled={isConnected || comingSoon || connectingType === integration.type}
                         onClick={() => handleConnect(integration.type)}
                       >
-                        {isConnected ? (
+                        {comingSoon ? (
+                          'Coming soon'
+                        ) : isConnected ? (
                           <>
                             <CheckCircle className="h-4 w-4 mr-2" />
                             Connected
@@ -398,7 +736,7 @@ export default function IntegrationsPage() {
                         ) : (
                           <>
                             <Plus className="h-4 w-4 mr-2" />
-                            Connect
+                            {connectingType === integration.type ? 'Connecting...' : 'Connect'}
                           </>
                         )}
                       </Button>
@@ -407,6 +745,95 @@ export default function IntegrationsPage() {
                 );
               })}
             </div>
+          </TabsContent>
+
+          <TabsContent value="email" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Email scan</CardTitle>
+                <CardDescription>
+                  Scan connected Google or Microsoft mailboxes for invoices and receipts.
+                  Connect Workspace first if you do not see a configuration here.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {emailScans.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8">
+                    <Mail className="h-12 w-12 text-gray-400 mb-4" />
+                    <p className="text-gray-500 mb-4">No email scan configured yet</p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleConnect('google_workspace')}
+                        disabled={connectingType === 'google_workspace'}
+                      >
+                        Connect Google
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleConnect('microsoft_365')}
+                        disabled={connectingType === 'microsoft_365'}
+                      >
+                        Connect Microsoft
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {emailScans.map((config) => (
+                      <div
+                        key={config.id}
+                        className="flex items-center justify-between p-4 border rounded-lg"
+                      >
+                        <div>
+                          <p className="font-medium">
+                            {(config.mailboxes || []).join(', ') || 'All connected mailboxes'}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            Last scan:{' '}
+                            {config.last_scan || config.last_scan_at
+                              ? format(new Date(config.last_scan || config.last_scan_at || ''), 'MMM d, h:mm a')
+                              : 'Never'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Switch
+                            checked={config.enabled ?? config.is_active ?? false}
+                            onCheckedChange={async (checked) => {
+                              try {
+                                const updated = await integrationsApi.updateEmailScan(config.id, {
+                                  enabled: checked,
+                                });
+                                setEmailScans(
+                                  emailScans.map((item) => (item.id === updated.id ? updated : item))
+                                );
+                              } catch (error) {
+                                toast.error(apiError(error, 'Failed to update scan'));
+                              }
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              try {
+                                await integrationsApi.scanEmailsNow(config.id);
+                                toast.success('Email scan started');
+                              } catch (error) {
+                                toast.error(apiError(error, 'Failed to start email scan'));
+                              }
+                            }}
+                          >
+                            <RefreshCw className="h-4 w-4 mr-1" />
+                            Scan now
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="banking" className="space-y-4">
@@ -419,7 +846,7 @@ export default function IntegrationsPage() {
                       Connected accounts for subscription discovery
                     </CardDescription>
                   </div>
-                  <Button onClick={() => handleConnect('plaid')}>
+                  <Button onClick={() => handleConnect('plaid')} disabled={connectingType === 'plaid'}>
                     <Plus className="h-4 w-4 mr-2" />
                     Add Account
                   </Button>
@@ -430,7 +857,7 @@ export default function IntegrationsPage() {
                   <div className="flex flex-col items-center justify-center py-8">
                     <CreditCard className="h-12 w-12 text-gray-400 mb-4" />
                     <p className="text-gray-500 mb-4">No bank accounts connected</p>
-                    <Button onClick={() => handleConnect('plaid')}>
+                    <Button onClick={() => handleConnect('plaid')} disabled={connectingType === 'plaid'}>
                       Connect Bank Account
                     </Button>
                   </div>
@@ -605,7 +1032,7 @@ export default function IntegrationsPage() {
                                     w.id === updated.id ? updated : w
                                   )
                                 );
-                              } catch (error) {
+                              } catch {
                                 toast.error('Failed to update webhook');
                               }
                             }}

@@ -3,35 +3,62 @@ Integration models for Subscription Waste Manager
 Handles connections to external systems like SSO, Slack, Bank feeds, etc.
 """
 
+import json
 import uuid
 from django.db import models
 from django.conf import settings
 from users.models import Organization, User
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+
+
+def _fernet():
+    key = getattr(settings, 'ENCRYPTION_KEY', '') or ''
+    if not key:
+        return None
+    raw = key.encode() if isinstance(key, str) else key
+    try:
+        return Fernet(raw)
+    except (ValueError, TypeError):
+        return None
 
 
 class EncryptedFieldMixin:
-    """Mixin for encrypting sensitive data"""
-    
+    """Mixin for encrypting sensitive string data with Fernet."""
+
+    FERNET_PREFIX = 'enc:'
+
     @staticmethod
     def encrypt_value(value):
-        if not value:
+        if value is None or value == '':
             return value
-        key = settings.ENCRYPTION_KEY
-        if not key:
+        if not isinstance(value, str):
+            value = json.dumps(value)
+        if value.startswith(EncryptedFieldMixin.FERNET_PREFIX):
             return value
-        f = Fernet(key.encode() if isinstance(key, str) else key)
-        return f.encrypt(value.encode()).decode()
-    
+        f = _fernet()
+        if not f:
+            return value
+        return EncryptedFieldMixin.FERNET_PREFIX + f.encrypt(value.encode()).decode()
+
     @staticmethod
     def decrypt_value(value):
-        if not value:
+        if value is None or value == '':
             return value
-        key = settings.ENCRYPTION_KEY
-        if not key:
+        if not isinstance(value, str):
             return value
-        f = Fernet(key.encode() if isinstance(key, str) else key)
-        return f.decrypt(value.encode()).decode()
+        f = _fernet()
+        if not f:
+            if value.startswith(EncryptedFieldMixin.FERNET_PREFIX):
+                return value[len(EncryptedFieldMixin.FERNET_PREFIX):]
+            return value
+        token = value
+        if value.startswith(EncryptedFieldMixin.FERNET_PREFIX):
+            token = value[len(EncryptedFieldMixin.FERNET_PREFIX):]
+        try:
+            return f.decrypt(token.encode()).decode()
+        except (InvalidToken, ValueError, TypeError):
+            # Legacy plaintext or wrong key — return as stored
+            return value
 
 
 class Integration(models.Model):
@@ -125,14 +152,53 @@ class Integration(models.Model):
         return f"{self.organization.name} - {self.name}"
     
     def set_credential(self, key, value):
-        """Encrypt and store a credential"""
-        encrypted = EncryptedFieldMixin.encrypt_value(value)
-        self.credentials[key] = encrypted
-    
+        """Encrypt and store a credential field."""
+        if self.credentials is None:
+            self.credentials = {}
+        if value is None:
+            self.credentials.pop(key, None)
+            return
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value)
+        elif not isinstance(value, str):
+            value = str(value)
+        self.credentials[key] = EncryptedFieldMixin.encrypt_value(value)
+
     def get_credential(self, key):
-        """Get and decrypt a credential"""
-        encrypted = self.credentials.get(key)
-        return EncryptedFieldMixin.decrypt_value(encrypted) if encrypted else None
+        """Get and decrypt a credential field."""
+        encrypted = (self.credentials or {}).get(key)
+        if encrypted is None:
+            return None
+        return EncryptedFieldMixin.decrypt_value(encrypted)
+
+    def set_credentials_dict(self, credentials):
+        """Replace credentials with an encrypted dict of string values."""
+        encrypted = {}
+        for key, value in (credentials or {}).items():
+            if value is None:
+                continue
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value)
+            elif not isinstance(value, str):
+                value = str(value)
+            encrypted[key] = EncryptedFieldMixin.encrypt_value(value)
+        self.credentials = encrypted
+
+    def get_decrypted_credentials(self):
+        """Return a plain dict of decrypted credential values."""
+        result = {}
+        for key, value in (self.credentials or {}).items():
+            result[key] = EncryptedFieldMixin.decrypt_value(value)
+        return result
+
+    def save_credentials(self, credentials=None, update_fields=None):
+        """Persist credentials (optionally replacing them) with encryption."""
+        if credentials is not None:
+            self.set_credentials_dict(credentials)
+        fields = list(update_fields or ['credentials', 'updated_at'])
+        if 'credentials' not in fields:
+            fields.append('credentials')
+        self.save(update_fields=fields)
 
 
 class IntegrationSync(models.Model):
@@ -202,6 +268,7 @@ class EmailScanConfig(models.Model):
     
     class Meta:
         db_table = 'email_scan_configs'
+        ordering = ['-created_at']
 
 
 class BankAccount(models.Model):

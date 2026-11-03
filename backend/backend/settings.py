@@ -4,6 +4,7 @@ Production-ready configuration with environment variables.
 """
 
 import os
+import sys
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
@@ -20,6 +21,7 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-dev-key-change-in-p
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() == 'true'
+TESTING = 'test' in sys.argv or os.getenv('DJANGO_TESTING', '').lower() == 'true'
 
 ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
@@ -95,13 +97,21 @@ ASGI_APPLICATION = 'backend.asgi.application'
 
 # Database
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'),
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
-}
+if TESTING:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+else:
+    DATABASES = {
+        'default': dj_database_url.config(
+            default='sqlite:///' + str(BASE_DIR / 'db.sqlite3'),
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
+    }
 
 # Cache configuration
 CACHES = {
@@ -184,16 +194,30 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 # Media files
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+EXPORT_ROOT = BASE_DIR / 'exports'
+(BASE_DIR / 'exports').mkdir(exist_ok=True)
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
+    origin.strip()
+    for origin in os.getenv(
+        'CORS_ALLOWED_ORIGINS',
+        'http://localhost:3000,http://127.0.0.1:3000',
+    ).split(',')
+    if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        'CSRF_TRUSTED_ORIGINS',
+        'http://localhost:3000,http://127.0.0.1:3000',
+    ).split(',')
+    if origin.strip()
+]
 
 # REST Framework configuration
 REST_FRAMEWORK = {
@@ -275,7 +299,23 @@ SOCIAL_AUTH_PIPELINE = (
     'social_core.pipeline.social_auth.associate_user',
     'social_core.pipeline.social_auth.load_extra_data',
     'social_core.pipeline.user.user_details',
+    'users.pipeline.save_organization_info',
+    'users.pipeline.assign_default_role',
+    'users.pipeline.check_sso_connection',
+    'users.pipeline.create_audit_log',
+    'users.pipeline.sync_google_workspace_users',
 )
+
+SOCIAL_AUTH_LOGIN_REDIRECT_URL = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/dashboard"
+SOCIAL_AUTH_NEW_USER_REDIRECT_URL = SOCIAL_AUTH_LOGIN_REDIRECT_URL
+LOGIN_REDIRECT_URL = SOCIAL_AUTH_LOGIN_REDIRECT_URL
+
+# Integration OAuth (Google Workspace / Microsoft 365 connectors)
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', os.getenv('GOOGLE_OAUTH_CLIENT_ID', ''))
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', ''))
+MICROSOFT_CLIENT_ID = os.getenv('MICROSOFT_CLIENT_ID', '')
+MICROSOFT_CLIENT_SECRET = os.getenv('MICROSOFT_CLIENT_SECRET', '')
+MICROSOFT_TENANT_ID = os.getenv('MICROSOFT_TENANT_ID', 'common')
 
 # OpenAI settings
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
@@ -285,6 +325,9 @@ OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4-turbo-preview')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+STRIPE_PRICE_STARTER = os.getenv('STRIPE_PRICE_STARTER', '')
+STRIPE_PRICE_PRO = os.getenv('STRIPE_PRICE_PRO', '')
+STRIPE_PRICE_ENTERPRISE = os.getenv('STRIPE_PRICE_ENTERPRISE', '')
 
 # Plaid settings
 PLAID_CLIENT_ID = os.getenv('PLAID_CLIENT_ID', '')
@@ -296,13 +339,14 @@ SLACK_CLIENT_ID = os.getenv('SLACK_CLIENT_ID', '')
 SLACK_CLIENT_SECRET = os.getenv('SLACK_CLIENT_SECRET', '')
 SLACK_SIGNING_SECRET = os.getenv('SLACK_SIGNING_SECRET', '')
 
-# Encryption key for sensitive data
+# Encryption key for sensitive data (Fernet: url-safe base64-encoded 32-byte key)
 ENCRYPTION_KEY = os.getenv('ENCRYPTION_KEY', '')
 
 # Frontend URL
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Email configuration
+# Prefer Anymail when ANYMAIL_BACKEND / ESP credentials are set; else Django SMTP/console.
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
@@ -310,6 +354,32 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@swm.com')
+SERVER_EMAIL = os.getenv('SERVER_EMAIL', DEFAULT_FROM_EMAIL)
+
+ANYMAIL = {
+    'SENDGRID_API_KEY': os.getenv('SENDGRID_API_KEY', ''),
+    'MAILGUN_API_KEY': os.getenv('MAILGUN_API_KEY', ''),
+    'MAILGUN_SENDER_DOMAIN': os.getenv('MAILGUN_SENDER_DOMAIN', ''),
+}
+if os.getenv('ANYMAIL_ESP', '').lower() == 'sendgrid' and ANYMAIL['SENDGRID_API_KEY']:
+    EMAIL_BACKEND = 'anymail.backends.sendgrid.EmailBackend'
+elif os.getenv('ANYMAIL_ESP', '').lower() == 'mailgun' and ANYMAIL['MAILGUN_API_KEY']:
+    EMAIL_BACKEND = 'anymail.backends.mailgun.EmailBackend'
+
+# Sentry (optional) — ignore empty / placeholder DSNs (e.g. blank scheme)
+SENTRY_DSN = (os.getenv('SENTRY_DSN', '') or '').strip()
+if SENTRY_DSN.startswith(('http://', 'https://')) and not TESTING:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.celery import CeleryIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration(), CeleryIntegration()],
+        traces_sample_rate=float(os.getenv('SENTRY_TRACES_SAMPLE_RATE', '0.1')),
+        send_default_pii=False,
+        environment=os.getenv('SENTRY_ENVIRONMENT', 'development' if DEBUG else 'production'),
+    )
 
 # Logging configuration
 LOGGING = {
@@ -367,8 +437,8 @@ LOGGING = {
 (BASE_DIR / 'logs').mkdir(exist_ok=True)
 (BASE_DIR / 'static').mkdir(exist_ok=True)
 
-# Security settings for production
-if not DEBUG:
+# Security settings for production (skip during tests so HTTP clients work)
+if not DEBUG and not TESTING:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
@@ -378,3 +448,43 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+
+    if not ENCRYPTION_KEY:
+        raise ValueError(
+            'ENCRYPTION_KEY is required when DJANGO_DEBUG=False. '
+            'Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+        )
+    try:
+        from cryptography.fernet import Fernet
+        Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
+    except Exception as exc:
+        raise ValueError(
+            'ENCRYPTION_KEY must be a valid Fernet key (url-safe base64-encoded 32 bytes).'
+        ) from exc
+
+    if EMAIL_BACKEND == 'django.core.mail.backends.console.EmailBackend':
+        import warnings
+        warnings.warn(
+            'EMAIL_BACKEND is still console in production. '
+            'Set ANYMAIL_ESP=sendgrid|mailgun or EMAIL_BACKEND to an SMTP backend.',
+            RuntimeWarning,
+            stacklevel=1,
+        )
+
+if TESTING:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
+    SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        }
+    }
+    REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = []
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {}
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+    AXES_ENABLED = False

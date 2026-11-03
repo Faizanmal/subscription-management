@@ -41,9 +41,8 @@ def _refresh_google_access_token(integration, credentials):
     payload = response.json()
     credentials['access_token'] = payload.get('access_token')
     if payload.get('expires_in'):
-        credentials['expires_in'] = payload['expires_in']
-    integration.credentials = credentials
-    integration.save(update_fields=['credentials', 'updated_at'])
+        credentials['expires_in'] = str(payload['expires_in'])
+    integration.save_credentials(credentials)
     return credentials.get('access_token')
 
 
@@ -73,9 +72,8 @@ def _refresh_microsoft_access_token(integration, credentials):
     payload = response.json()
     credentials['access_token'] = payload.get('access_token')
     if payload.get('expires_in'):
-        credentials['expires_in'] = payload['expires_in']
-    integration.credentials = credentials
-    integration.save(update_fields=['credentials', 'updated_at'])
+        credentials['expires_in'] = str(payload['expires_in'])
+    integration.save_credentials(credentials)
     return credentials.get('access_token')
 
 
@@ -107,34 +105,48 @@ def sync_integration(self, integration_id, sync_id=None):
                 'slack': sync_slack,
                 'okta': sync_okta,
                 'azure_ad': sync_azure_ad,
+                'teams': sync_teams,
+                'quickbooks': sync_quickbooks,
+                'xero': sync_xero,
+                'workday': sync_workday,
+                'bamboohr': sync_bamboohr,
+                'gusto': sync_gusto,
+                'rippling': sync_rippling,
+                'concur': sync_concur,
+                'expensify': sync_expensify,
+                'brex': sync_brex,
+                'ramp': sync_ramp,
+                'onelogin': sync_onelogin,
+                'jumpcloud': sync_jumpcloud,
             }
             
             handler = handlers.get(integration.type)
             if handler:
-                result = handler(integration)
-                sync.items_synced = result.get('items', 0)
+                result = handler(integration) or {}
+                sync.records_processed = result.get('items', 0)
                 sync.sync_data = result.get('data', {})
-                sync.status = 'completed'
+                sync.status = IntegrationSync.Status.COMPLETED
             else:
-                sync.status = 'failed'
-                sync.errors = [f"No handler for integration type: {integration.type}"]
+                sync.status = IntegrationSync.Status.FAILED
+                sync.error_message = f"No handler for integration type: {integration.type}"
             
             sync.completed_at = timezone.now()
             sync.save()
             
-            # Update integration
-            integration.last_sync_at = timezone.now()
-            integration.error_message = None
-            integration.save()
+            integration.last_sync = timezone.now()
+            integration.last_sync_status = 'success' if sync.status == IntegrationSync.Status.COMPLETED else 'failed'
+            integration.last_sync_error = sync.error_message
+            integration.save(update_fields=['last_sync', 'last_sync_status', 'last_sync_error', 'updated_at'])
             
         except Exception as e:
-            sync.status = 'failed'
-            sync.errors = [str(e)]
+            sync.status = IntegrationSync.Status.FAILED
+            sync.error_message = str(e)
             sync.completed_at = timezone.now()
             sync.save()
             
-            integration.error_message = str(e)
-            integration.save()
+            integration.last_sync_error = str(e)
+            integration.last_sync_status = 'failed'
+            integration.save(update_fields=['last_sync_error', 'last_sync_status', 'updated_at'])
             
             raise
         
@@ -162,6 +174,12 @@ def test_integration(self, integration_id):
             result = test_plaid(integration)
         elif integration.type == 'slack':
             result = test_slack(integration)
+        elif integration.type == 'teams':
+            result = test_teams(integration)
+        elif integration.type == 'okta':
+            result = {'success': bool(integration.get_decrypted_credentials()), 'message': 'Credentials present'}
+        elif integration.type == 'azure_ad':
+            result = {'success': bool(integration.get_decrypted_credentials()), 'message': 'Credentials present'}
         else:
             result = {'success': False, 'error': 'Unknown integration type'}
         
@@ -177,7 +195,7 @@ def sync_google_workspace(integration):
     """Sync Google Workspace users and apps"""
     from services.models import Subscription, SoftwareVendor
     
-    credentials = integration.credentials or {}
+    credentials = integration.get_decrypted_credentials()
     access_token = credentials.get('access_token')
     
     if not access_token:
@@ -232,7 +250,7 @@ def sync_microsoft_365(integration):
     """Sync Microsoft 365 users and apps"""
     from services.models import Subscription, SoftwareVendor
     
-    credentials = integration.credentials or {}
+    credentials = integration.get_decrypted_credentials()
     access_token = credentials.get('access_token')
     
     if not access_token:
@@ -308,7 +326,7 @@ def sync_plaid_accounts(self, integration_id):
         api_client = plaid.ApiClient(configuration)
         client = plaid_api.PlaidApi(api_client)
         
-        credentials = integration.credentials or {}
+        credentials = integration.get_decrypted_credentials()
         access_token = credentials.get('access_token')
         
         if not access_token:
@@ -319,17 +337,28 @@ def sync_plaid_accounts(self, integration_id):
         accounts_response = client.accounts_get(accounts_request)
         
         for account_data in accounts_response['accounts']:
+            raw_type = str(
+                account_data.get('subtype') or account_data.get('type') or 'checking'
+            ).lower().replace(' ', '_')
+            if raw_type not in {'checking', 'savings', 'credit_card', 'debit_card', 'corporate_card'}:
+                if 'credit' in raw_type:
+                    raw_type = 'credit_card'
+                elif 'saving' in raw_type:
+                    raw_type = 'savings'
+                else:
+                    raw_type = 'checking'
             account, _ = BankAccount.objects.update_or_create(
                 organization=integration.organization,
                 integration=integration,
                 plaid_account_id=account_data['account_id'],
                 defaults={
-                    'institution_name': account_data.get('institution_name', ''),
+                    'institution_name': account_data.get('institution_name') or '',
                     'name': account_data['name'],
-                    'account_type': account_data.get('subtype') or account_data['type'],
-                    'mask': account_data.get('mask'),
+                    'account_type': raw_type,
+                    'mask': account_data.get('mask') or '',
                     'plaid_item_id': credentials.get('item_id'),
-                    'is_active': True
+                    'is_active': True,
+                    'last_sync': timezone.now(),
                 }
             )
         
@@ -399,8 +428,8 @@ def sync_plaid_accounts(self, integration_id):
                             'subscription', 'is_matched', 'match_confidence', 'matched_by'
                         ])
         
-        integration.last_sync_at = timezone.now()
-        integration.save()
+        integration.last_sync = timezone.now()
+        integration.save(update_fields=['last_sync', 'updated_at'])
         
         return {
             'items': transactions_created,
@@ -427,7 +456,7 @@ def scan_emails(email_config_id):
         config = EmailScanConfig.objects.select_related('integration').get(id=email_config_id)
         integration = config.integration
         
-        credentials = integration.credentials or {}
+        credentials = integration.get_decrypted_credentials()
         access_token = credentials.get('access_token')
         
         if not access_token:
@@ -460,8 +489,8 @@ def scan_emails(email_config_id):
                 }
             )
         
-        config.last_scan_at = timezone.now()
-        config.save()
+        config.last_scan = timezone.now()
+        config.save(update_fields=['last_scan', 'updated_at'])
         
         logger.info(f"Email scan found {len(subscriptions)} subscriptions")
         
@@ -650,25 +679,28 @@ def send_webhook(self, webhook_id, event_type, payload):
             )
             
             duration = (timezone.now() - start_time).total_seconds() * 1000
-            
-            # Create delivery record
+            ok = 200 <= response.status_code < 300
+
             WebhookDelivery.objects.create(
                 webhook=webhook,
                 event_type=event_type,
                 payload=payload,
+                status=WebhookDelivery.Status.SUCCESS if ok else WebhookDelivery.Status.FAILED,
                 response_status=response.status_code,
                 response_body=response.text[:1000],
-                duration_ms=int(duration),
-                success=200 <= response.status_code < 300,
-                attempt_count=1
+                attempts=1,
+                delivered_at=timezone.now() if ok else None,
             )
-            
-            if 200 <= response.status_code < 300:
-                webhook.failure_count = 0
+
+            webhook.total_deliveries += 1
+            if ok:
+                webhook.successful_deliveries += 1
+                webhook.last_success = timezone.now()
             else:
-                webhook.failure_count += 1
-            
-            webhook.last_triggered_at = timezone.now()
+                webhook.failed_deliveries += 1
+                webhook.last_failure = timezone.now()
+                webhook.last_error = response.text[:500]
+            webhook.last_triggered = timezone.now()
             webhook.save()
             
         except requests.RequestException as e:
@@ -678,14 +710,17 @@ def send_webhook(self, webhook_id, event_type, payload):
                 webhook=webhook,
                 event_type=event_type,
                 payload=payload,
+                status=WebhookDelivery.Status.FAILED,
                 response_status=0,
-                response_body=str(e),
-                duration_ms=int(duration),
-                success=False,
-                attempt_count=1
+                response_body=str(e)[:1000],
+                attempts=1,
             )
-            
-            webhook.failure_count += 1
+
+            webhook.total_deliveries += 1
+            webhook.failed_deliveries += 1
+            webhook.last_failure = timezone.now()
+            webhook.last_error = str(e)[:500]
+            webhook.last_triggered = timezone.now()
             webhook.save()
             
             raise
@@ -703,7 +738,7 @@ def send_slack_notification(self, slack_notification_id, message, attachments=No
     from integrations.models import SlackNotification
     
     try:
-        notification = SlackNotification.objects.get(id=slack_notification_id)
+        notification = SlackNotification.objects.select_related('integration').get(id=slack_notification_id)
         
         if not notification.is_active:
             return
@@ -716,8 +751,14 @@ def send_slack_notification(self, slack_notification_id, message, attachments=No
         if attachments:
             payload['attachments'] = attachments
         
+        integration = notification.integration
+        creds = integration.get_decrypted_credentials() if integration else {}
+        webhook_url = (creds or {}).get('webhook_url') or (integration.config or {}).get('webhook_url')
+        if not webhook_url:
+            raise ValueError('No Slack webhook URL configured')
+
         response = requests.post(
-            notification.webhook_url,
+            webhook_url,
             json=payload,
             timeout=10
         )
@@ -736,20 +777,116 @@ def send_slack_notification(self, slack_notification_id, message, attachments=No
 
 def sync_slack(integration):
     """Sync Slack workspace data"""
-    # Placeholder - would sync workspace users, channels, etc.
-    return {'items': 0, 'data': {}}
+    # Incoming-webhook integrations have no directory sync.
+    return {'items': 0, 'data': {'status': 'webhook_only'}}
+
+
+def sync_teams(integration):
+    """Sync Microsoft Teams — webhook-only connector has no directory sync."""
+    return {'items': 0, 'data': {'status': 'webhook_only'}}
 
 
 def sync_okta(integration):
-    """Sync Okta users and apps"""
-    # Placeholder - would sync via Okta API
-    return {'items': 0, 'data': {}}
+    """Sync Okta apps into SSO connections."""
+    from integrations.models import SSOConnection
+
+    credentials = integration.get_decrypted_credentials()
+    domain = credentials.get('domain') or (integration.config or {}).get('domain')
+    api_token = credentials.get('api_token')
+    if not domain or not api_token:
+        raise ValueError('Okta domain or API token missing')
+
+    response = requests.get(
+        f'https://{domain}/api/v1/apps',
+        headers={'Authorization': f'SSWS {api_token}', 'Accept': 'application/json'},
+        params={'limit': 200},
+        timeout=30,
+    )
+    if response.status_code != 200:
+        raise ValueError(f'Okta API error: {response.status_code}')
+
+    apps = response.json() if isinstance(response.json(), list) else []
+    created = 0
+    for app in apps:
+        app_id = str(app.get('id') or '')[:255]
+        if not app_id:
+            continue
+        _, was_created = SSOConnection.objects.update_or_create(
+            organization=integration.organization,
+            integration=integration,
+            app_id=app_id,
+            defaults={
+                'app_name': app.get('label') or app.get('name') or 'Okta app',
+                'app_type': app.get('signOnMode') or '',
+                'is_active': app.get('status') == 'ACTIVE',
+            },
+        )
+        if was_created:
+            created += 1
+    return {'items': len(apps), 'data': {'apps': len(apps), 'created': created}}
 
 
 def sync_azure_ad(integration):
-    """Sync Azure AD users and apps"""
-    # Placeholder - would sync via Azure AD Graph API
-    return {'items': 0, 'data': {}}
+    """Sync Azure AD enterprise apps into SSO connections."""
+    from integrations.models import SSOConnection
+
+    credentials = integration.get_decrypted_credentials()
+    tenant_id = credentials.get('tenant_id')
+    client_id = credentials.get('client_id')
+    client_secret = credentials.get('client_secret')
+    access_token = credentials.get('access_token')
+
+    if client_id and client_secret and tenant_id:
+        token_response = requests.post(
+            f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+            data={
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'grant_type': 'client_credentials',
+                'scope': 'https://graph.microsoft.com/.default',
+            },
+            timeout=15,
+        )
+        if token_response.status_code == 200:
+            access_token = token_response.json().get('access_token')
+            credentials['access_token'] = access_token
+            integration.save_credentials(credentials)
+
+    if not access_token:
+        raise ValueError('No Azure AD access token available')
+
+    response = requests.get(
+        'https://graph.microsoft.com/v1.0/servicePrincipals',
+        headers={'Authorization': f'Bearer {access_token}'},
+        params={
+            '$top': 100,
+            '$select': 'id,appDisplayName,appId,accountEnabled,preferredSingleSignOnMode',
+        },
+        timeout=30,
+    )
+    if response.status_code != 200:
+        raise ValueError(f'Microsoft Graph error: {response.status_code}')
+
+    principals = response.json().get('value') or []
+    created = 0
+    for app in principals:
+        name = app.get('appDisplayName') or ''
+        if not name:
+            continue
+        app_id = str(app.get('appId') or app.get('id') or '')[:255]
+        _, was_created = SSOConnection.objects.update_or_create(
+            organization=integration.organization,
+            integration=integration,
+            app_id=app_id,
+            defaults={
+                'app_name': name[:255],
+                'app_type': app.get('preferredSingleSignOnMode') or 'azure_ad',
+                'is_active': bool(app.get('accountEnabled', True)),
+            },
+        )
+        if was_created:
+            created += 1
+    return {'items': len(principals), 'data': {'apps': len(principals), 'created': created}}
 
 
 def scan_emails_for_subscriptions(integration):
@@ -768,7 +905,7 @@ def scan_emails_for_subscriptions(integration):
 
 def test_google_workspace(integration):
     """Test Google Workspace connection"""
-    credentials = integration.credentials or {}
+    credentials = integration.get_decrypted_credentials()
     access_token = credentials.get('access_token')
     
     if not access_token:
@@ -789,7 +926,7 @@ def test_google_workspace(integration):
 
 def test_microsoft_365(integration):
     """Test Microsoft 365 connection"""
-    credentials = integration.credentials or {}
+    credentials = integration.get_decrypted_credentials()
     access_token = credentials.get('access_token')
     
     if not access_token:
@@ -809,7 +946,7 @@ def test_microsoft_365(integration):
 
 def test_plaid(integration):
     """Test Plaid connection"""
-    credentials = integration.credentials or {}
+    credentials = integration.get_decrypted_credentials()
     access_token = credentials.get('access_token')
     
     if not access_token:
@@ -819,10 +956,14 @@ def test_plaid(integration):
     return {'success': True, 'message': 'Connection configured'}
 
 
+def _integration_webhook_url(integration):
+    creds = integration.get_decrypted_credentials() or {}
+    return creds.get('webhook_url') or (integration.config or {}).get('webhook_url')
+
+
 def test_slack(integration):
     """Test Slack connection"""
-    config = integration.config or {}
-    webhook_url = config.get('webhook_url')
+    webhook_url = _integration_webhook_url(integration)
     
     if not webhook_url:
         return {'success': False, 'error': 'No webhook URL configured'}
@@ -837,3 +978,57 @@ def test_slack(integration):
         return {'success': True, 'message': 'Connection successful'}
     
     return {'success': False, 'error': f'Webhook error: {response.status_code}'}
+
+
+def test_teams(integration):
+    """Test Microsoft Teams incoming webhook"""
+    webhook_url = _integration_webhook_url(integration)
+    if not webhook_url:
+        return {'success': False, 'error': 'No webhook URL configured'}
+    response = requests.post(
+        webhook_url,
+        json={'text': 'Test connection from SWM'},
+        timeout=10,
+    )
+    if response.status_code in (200, 202):
+        return {'success': True, 'message': 'Connection successful'}
+    return {'success': False, 'error': f'Webhook error: {response.status_code}'}
+
+def sync_workday(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_bamboohr(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_gusto(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_rippling(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_concur(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_expensify(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_brex(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_ramp(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_onelogin(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+def sync_jumpcloud(integration): return {'items': 0, 'data': {'status': 'mocked'}}
+
+
+@shared_task
+def sync_all_integrations():
+    """Periodic sync for all connected, sync-enabled launch integrations."""
+    from integrations.models import Integration
+    from users.plans import FEATURE_DISCOVERY_SYNC, has_feature
+
+    launch_types = [
+        'google_workspace',
+        'microsoft_365',
+        'plaid',
+        'okta',
+        'azure_ad',
+    ]
+    integrations = Integration.objects.filter(
+        status=Integration.Status.CONNECTED,
+        sync_enabled=True,
+        type__in=launch_types,
+    ).select_related('organization')
+    queued = 0
+    for integration in integrations:
+        if not has_feature(integration.organization, FEATURE_DISCOVERY_SYNC):
+            continue
+        sync_integration.delay(str(integration.id))
+        queued += 1
+    logger.info('Queued sync for %s integrations', queued)
+    return {'queued': queued}

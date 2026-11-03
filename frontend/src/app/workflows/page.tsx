@@ -67,6 +67,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import Link from 'next/link';
+import { PlanUpgradeCard } from '@/components/plan-upgrade-card';
+import { hardNavigate } from '@/lib/navigation';
 import type {
   Workflow as WorkflowType,
   WorkflowExecution,
@@ -144,7 +147,7 @@ export default function WorkflowsPage() {
       ]);
       setWorkflows(Array.isArray(workflowsData) ? workflowsData : workflowsData.results || []);
       setExecutions(Array.isArray(executionsData) ? executionsData : executionsData.results || []);
-    } catch (error) {
+    } catch {
       toast.error('Failed to load workflows');
     } finally {
       setIsLoading(false);
@@ -168,8 +171,18 @@ export default function WorkflowsPage() {
       setShowCreateDialog(false);
       resetForm();
       toast.success('Workflow created successfully');
-    } catch (error) {
-      toast.error('Failed to create workflow');
+    } catch (error: unknown) {
+      const err = error as { response?: { status?: number; data?: { code?: string; error?: string; upgrade_url?: string } } };
+      if (err.response?.status === 402 || err.response?.data?.code === 'plan_upgrade_required') {
+        toast.error(err.response?.data?.error || 'Workflows require Pro', {
+          action: {
+            label: 'Billing',
+            onClick: () => hardNavigate(err.response?.data?.upgrade_url || '/settings/billing'),
+          },
+        });
+      } else {
+        toast.error('Failed to create workflow');
+      }
     }
   };
 
@@ -193,7 +206,7 @@ export default function WorkflowsPage() {
       });
       setWorkflows(workflows.map((w) => (w.id === updated.id ? updated : w)));
       toast.success(`Workflow ${updated.is_active ? 'activated' : 'deactivated'}`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to update workflow');
     }
   };
@@ -203,7 +216,7 @@ export default function WorkflowsPage() {
       await workflowsApi.delete(id);
       setWorkflows(workflows.filter((w) => w.id !== id));
       toast.success('Workflow deleted');
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete workflow');
     }
   };
@@ -213,7 +226,7 @@ export default function WorkflowsPage() {
       const execution = await workflowsApi.run(id);
       setExecutions([execution, ...executions]);
       toast.success('Workflow triggered');
-    } catch (error) {
+    } catch {
       toast.error('Failed to run workflow');
     }
   };
@@ -508,19 +521,30 @@ export default function WorkflowsPage() {
 
           <TabsContent value="workflows" className="space-y-4">
             {workflows.length === 0 ? (
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center py-12">
-                  <Workflow className="h-12 w-12 text-gray-400 mb-4" />
-                  <h3 className="text-lg font-medium">No workflows yet</h3>
-                  <p className="text-gray-500 mb-4">
-                    Create your first automation workflow
-                  </p>
-                  <Button onClick={() => setShowCreateDialog(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Create Workflow
-                  </Button>
-                </CardContent>
-              </Card>
+              <div className="space-y-4">
+                <PlanUpgradeCard
+                  title="Automate renewals and unused-seat actions"
+                  description="Workflows are a Pro/trial feature. You can still review alerts and subscriptions on Starter."
+                />
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-12">
+                    <Workflow className="h-12 w-12 text-gray-400 mb-4" />
+                    <h3 className="text-lg font-medium">No workflows yet</h3>
+                    <p className="text-gray-500 mb-4">
+                      Create your first automation workflow
+                    </p>
+                    <div className="flex gap-2">
+                      <Button onClick={() => setShowCreateDialog(true)}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Create Workflow
+                      </Button>
+                      <Button variant="outline" asChild>
+                        <Link href="/settings/billing">Upgrade</Link>
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {workflows.map((workflow) => (

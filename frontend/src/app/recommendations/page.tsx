@@ -43,6 +43,9 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import Link from 'next/link';
+import { toast } from 'sonner';
+import { PlanUpgradeCard } from '@/components/plan-upgrade-card';
+import { hardNavigate } from '@/lib/navigation';
 import type { Recommendation, RecommendationType, RecommendationPriority } from '@/types/swm';
 
 const TYPE_ICONS: Record<RecommendationType, React.ReactNode> = {
@@ -284,15 +287,41 @@ export default function RecommendationsPage() {
     approveRecommendation,
     dismissRecommendation,
     implementRecommendation,
+    generateRecommendations,
   } = useRecommendationsStore();
 
   const [typeFilter, setTypeFilter] = useState<RecommendationType | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<RecommendationPriority | 'all'>('all');
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     fetchRecommendations();
     fetchQuickWins();
   }, [fetchRecommendations, fetchQuickWins]);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      await generateRecommendations();
+      toast.success('Recommendation generation started');
+      await fetchRecommendations();
+      await fetchQuickWins();
+    } catch (error: unknown) {
+      const err = error as { response?: { status?: number; data?: { code?: string; error?: string; upgrade_url?: string } }; message?: string };
+      if (err.response?.status === 402 || err.response?.data?.code === 'plan_upgrade_required') {
+        toast.error(err.response?.data?.error || 'AI recommendations require Pro', {
+          action: {
+            label: 'Billing',
+            onClick: () => hardNavigate(err.response?.data?.upgrade_url || '/settings/billing'),
+          },
+        });
+      } else {
+        toast.error(err.message || 'Failed to generate recommendations');
+      }
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const filterRecommendations = (recs: Recommendation[], status?: string) => {
     return recs.filter((r) => {
@@ -335,11 +364,24 @@ export default function RecommendationsPage() {
               AI-powered insights to optimize your subscriptions
             </p>
           </div>
-          <Button onClick={() => fetchRecommendations()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => fetchRecommendations()}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            <Button onClick={handleGenerate} disabled={generating}>
+              <Sparkles className="h-4 w-4 mr-2" />
+              {generating ? 'Generating…' : 'Generate AI'}
+            </Button>
+          </div>
         </div>
+
+        {recommendations.length === 0 && !isLoading && (
+          <PlanUpgradeCard
+            title="No recommendations yet"
+            description="Generate AI insights on Pro/trial, or add subscriptions and sync Workspace/M365 first. Starter plans can still track tools manually."
+          />
+        )}
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

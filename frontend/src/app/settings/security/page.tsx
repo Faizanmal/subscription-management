@@ -78,6 +78,13 @@ export default function SecurityPage() {
   const [newApiKey, setNewApiKey] = useState<{ key: string; secret: string } | null>(null);
   const [apiKeyForm, setApiKeyForm] = useState({ name: '', scopes: [] as string[] });
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string } | null>(null);
+  const [mfaSetup, setMfaSetup] = useState<{
+    device_id: string;
+    qr_code?: string;
+    secret?: string;
+  } | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [isVerifyingMfa, setIsVerifyingMfa] = useState(false);
 
   async function loadData() {
     setIsLoading(true);
@@ -92,7 +99,7 @@ export default function SecurityPage() {
       setMfaDevices(Array.isArray(devices) ? devices : devices.results || []);
       setSessions(Array.isArray(sessionData) ? sessionData : sessionData.results || []);
       setAuditLogs(Array.isArray(logs) ? logs : logs.results || []);
-    } catch (error) {
+    } catch {
     } finally {
       setIsLoading(false);
     }
@@ -125,19 +132,41 @@ export default function SecurityPage() {
       setApiKeys(apiKeys.filter((k) => k.id !== id));
       toast.success('API key revoked');
       setDeleteConfirm(null);
-    } catch (error) {
+    } catch {
       toast.error('Failed to revoke API key');
     }
   };
 
   const handleSetupMfa = async () => {
     try {
-      // const { qr_code, secret } = await securityApi.setupMFA('totp');
-      // Would show QR code for scanning
-      toast.success('MFA setup initiated');
-      loadData();
-    } catch (error) {
+      const result = await securityApi.setupMFA('totp');
+      setMfaSetup({
+        device_id: result.device_id,
+        qr_code: result.qr_code,
+        secret: result.secret,
+      });
+      setMfaCode('');
+    } catch {
       toast.error('Failed to setup MFA');
+    }
+  };
+
+  const handleVerifyMfa = async () => {
+    if (!mfaSetup || !mfaCode.trim()) {
+      toast.error('Enter the 6-digit code from your authenticator app');
+      return;
+    }
+    setIsVerifyingMfa(true);
+    try {
+      await securityApi.verifyMFA(mfaSetup.device_id, mfaCode.trim());
+      toast.success('MFA device verified');
+      setMfaSetup(null);
+      setMfaCode('');
+      loadData();
+    } catch {
+      toast.error('Invalid verification code');
+    } finally {
+      setIsVerifyingMfa(false);
     }
   };
 
@@ -147,7 +176,7 @@ export default function SecurityPage() {
       setMfaDevices(mfaDevices.filter((d) => d.id !== id));
       toast.success('MFA device removed');
       setDeleteConfirm(null);
-    } catch (error) {
+    } catch {
       toast.error('Failed to remove MFA device');
     }
   };
@@ -157,7 +186,7 @@ export default function SecurityPage() {
       await securityApi.revokeSession(id);
       setSessions(sessions.filter((s) => s.id !== id));
       toast.success('Session revoked');
-    } catch (error) {
+    } catch {
       toast.error('Failed to revoke session');
     }
   };
@@ -167,7 +196,7 @@ export default function SecurityPage() {
       await securityApi.revokeAllSessions();
       setSessions([]);
       toast.success('All sessions revoked');
-    } catch (error) {
+    } catch {
       toast.error('Failed to revoke sessions');
     }
   };
@@ -734,6 +763,53 @@ export default function SecurityPage() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <Dialog open={!!mfaSetup} onOpenChange={(open) => !open && setMfaSetup(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Set up authenticator app</DialogTitle>
+              <DialogDescription>
+                Scan the QR code with your authenticator app, then enter the 6-digit code to verify.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {mfaSetup?.qr_code && (
+                <div className="flex justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={mfaSetup.qr_code}
+                    alt="MFA QR code"
+                    className="h-48 w-48 rounded border bg-white p-2"
+                  />
+                </div>
+              )}
+              {mfaSetup?.secret && (
+                <p className="text-xs text-center text-gray-500 break-all">
+                  Secret: {mfaSetup.secret}
+                </p>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="mfa-code">Verification code</Label>
+                <Input
+                  id="mfa-code"
+                  inputMode="numeric"
+                  maxLength={8}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder="123456"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setMfaSetup(null)}>
+                Cancel
+              </Button>
+              <Button onClick={handleVerifyMfa} disabled={isVerifyingMfa}>
+                {isVerifyingMfa ? 'Verifying…' : 'Verify'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );

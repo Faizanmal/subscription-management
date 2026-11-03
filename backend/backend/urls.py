@@ -7,10 +7,12 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from api.health import HealthView
 
 urlpatterns = [
     # Admin
     path('admin/', admin.site.urls),
+    path('api/v1/health/', HealthView.as_view(), name='health'),
     
     # API v1 - Main services endpoints
     path('api/v1/', include('services.urls')),

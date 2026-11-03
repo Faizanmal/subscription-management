@@ -1,0 +1,4 @@
+#!/bin/sh
+# Block commits that add executable junk to frontend JS configs.
+root=$(git rev-parse --show-toplevel) || exit 1
+exec node "$root/frontend/scripts/guard-js-configs.mjs"

@@ -22,37 +22,45 @@ def track_usage_metrics(self, subscription_id):
         now = timezone.now()
         today = now.date()
         
-        # Get today's events
         events = UsageEvent.objects.filter(
             subscription=subscription,
             timestamp__date=today
         )
         
-        # Calculate metrics
-        active_users = events.values('user').distinct().count()
-        session_duration = events.aggregate(
-            avg=Avg('duration_seconds')
-        )['avg'] or 0
+        active_users = events.exclude(user__isnull=True).values('user').distinct().count()
+        total_sessions = events.filter(event_type='login').count()
+        durations = []
+        for event in events.exclude(metadata={}):
+            raw = (event.metadata or {}).get('duration_seconds')
+            if raw is None:
+                raw = (event.metadata or {}).get('duration_minutes')
+                if raw is not None:
+                    try:
+                        durations.append(float(raw) * 60)
+                    except (TypeError, ValueError):
+                        pass
+                continue
+            try:
+                durations.append(float(raw))
+            except (TypeError, ValueError):
+                pass
+        avg_duration = (sum(durations) / len(durations)) if durations else 0
+        total_duration_minutes = int(sum(durations) / 60) if durations else 0
         
-        # Create or update daily metrics
-        metrics, created = UsageMetrics.objects.update_or_create(
+        UsageMetrics.objects.update_or_create(
             subscription=subscription,
-            period_type='daily',
+            period='daily',
             period_start=today,
             defaults={
                 'period_end': today,
                 'active_users': active_users,
-                'total_logins': events.filter(event_type='login').count(),
-                'total_sessions': events.filter(event_type='session').count(),
-                'avg_session_duration': session_duration,
-                'feature_usage': {}
+                'total_users': subscription.used_licenses or active_users,
+                'total_sessions': total_sessions,
+                'total_duration_minutes': total_duration_minutes,
+                'avg_session_duration': avg_duration,
+                'feature_usage': {},
             }
         )
-        
-        # Update subscription's last usage date
-        if active_users > 0:
-            subscription.last_usage_at = now
-            subscription.save(update_fields=['last_usage_at'])
         
         logger.info(f"Updated usage metrics for {subscription.name}")
         
@@ -78,28 +86,30 @@ def aggregate_usage_metrics():
         for subscription in Subscription.objects.filter(status='active'):
             daily_metrics = UsageMetrics.objects.filter(
                 subscription=subscription,
-                period_type='daily',
+                period='daily',
                 period_start__gte=week_start,
                 period_start__lte=week_end
             )
             
             if daily_metrics.exists():
                 aggregated = daily_metrics.aggregate(
-                    total_logins=Sum('total_logins'),
                     total_sessions=Sum('total_sessions'),
+                    total_duration=Sum('total_duration_minutes'),
                     avg_duration=Avg('avg_session_duration'),
-                    max_users=Count('active_users')
+                    active_users=Sum('active_users'),
                 )
                 
-                UsageMetrics.objects.create(
+                UsageMetrics.objects.update_or_create(
                     subscription=subscription,
-                    period_type='weekly',
+                    period='weekly',
                     period_start=week_start,
-                    period_end=week_end,
-                    active_users=daily_metrics.aggregate(Sum('active_users'))['active_users__sum'] or 0,
-                    total_logins=aggregated['total_logins'] or 0,
-                    total_sessions=aggregated['total_sessions'] or 0,
-                    avg_session_duration=aggregated['avg_duration'] or 0
+                    defaults={
+                        'period_end': week_end,
+                        'active_users': aggregated['active_users'] or 0,
+                        'total_sessions': aggregated['total_sessions'] or 0,
+                        'total_duration_minutes': aggregated['total_duration'] or 0,
+                        'avg_session_duration': aggregated['avg_duration'] or 0,
+                    },
                 )
     
     # Monthly aggregation (on 1st of month)
@@ -110,27 +120,30 @@ def aggregate_usage_metrics():
         for subscription in Subscription.objects.filter(status='active'):
             daily_metrics = UsageMetrics.objects.filter(
                 subscription=subscription,
-                period_type='daily',
+                period='daily',
                 period_start__gte=month_start,
                 period_start__lte=month_end
             )
             
             if daily_metrics.exists():
                 aggregated = daily_metrics.aggregate(
-                    total_logins=Sum('total_logins'),
                     total_sessions=Sum('total_sessions'),
-                    avg_duration=Avg('avg_session_duration')
+                    total_duration=Sum('total_duration_minutes'),
+                    avg_duration=Avg('avg_session_duration'),
+                    active_users=Sum('active_users'),
                 )
                 
-                UsageMetrics.objects.create(
+                UsageMetrics.objects.update_or_create(
                     subscription=subscription,
-                    period_type='monthly',
+                    period='monthly',
                     period_start=month_start,
-                    period_end=month_end,
-                    active_users=daily_metrics.values('active_users').distinct().count(),
-                    total_logins=aggregated['total_logins'] or 0,
-                    total_sessions=aggregated['total_sessions'] or 0,
-                    avg_session_duration=aggregated['avg_duration'] or 0
+                    defaults={
+                        'period_end': month_end,
+                        'active_users': aggregated['active_users'] or 0,
+                        'total_sessions': aggregated['total_sessions'] or 0,
+                        'total_duration_minutes': aggregated['total_duration'] or 0,
+                        'avg_session_duration': aggregated['avg_duration'] or 0,
+                    },
                 )
     
     logger.info("Completed usage metrics aggregation")
@@ -141,23 +154,28 @@ def discover_subscriptions():
     """Discover new subscriptions from integrations"""
     from integrations.models import Integration
     from integrations.tasks import sync_integration
+    from users.plans import FEATURE_DISCOVERY_SYNC, has_feature
     
-    # Get all active discovery integrations
     integrations = Integration.objects.filter(
-        status='active',
-        type__in=['email_scan', 'google_workspace', 'microsoft_365', 'plaid', 'sso']
-    )
+        status=Integration.Status.CONNECTED,
+        sync_enabled=True,
+        type__in=['google_workspace', 'microsoft_365', 'plaid', 'okta', 'azure_ad'],
+    ).select_related('organization')
     
+    triggered = 0
     for integration in integrations:
+        if not has_feature(integration.organization, FEATURE_DISCOVERY_SYNC):
+            continue
         sync_integration.delay(str(integration.id))
+        triggered += 1
     
-    logger.info(f"Triggered discovery for {integrations.count()} integrations")
+    logger.info(f"Triggered discovery for {triggered} integrations")
 
 
 @shared_task
 def detect_redundancies():
     """Detect redundant subscriptions"""
-    from services.models import Subscription, RedundancyGroup
+    from services.models import Subscription, RedundancyGroup, RedundancyGroupMember
     from users.models import Organization
     
     for org in Organization.objects.all():
@@ -166,43 +184,41 @@ def detect_redundancies():
             status='active'
         ).select_related('vendor')
         
-        # Group by category
         category_groups = {}
         for sub in subscriptions:
             category = sub.vendor.category if sub.vendor else 'other'
-            if category not in category_groups:
-                category_groups[category] = []
-            category_groups[category].append(sub)
+            category_groups.setdefault(category, []).append(sub)
         
-        # Find redundancies
         for category, subs in category_groups.items():
             if len(subs) < 2:
                 continue
             
-            # Check for overlapping functionality
             for i, sub1 in enumerate(subs):
-                for sub2 in subs[i+1:]:
+                for sub2 in subs[i + 1:]:
                     overlap_score = calculate_overlap_score(sub1, sub2)
                     
-                    if overlap_score > 0.5:  # 50% overlap threshold
-                        # Create or update redundancy group
+                    if overlap_score > 0.5:
                         group, created = RedundancyGroup.objects.get_or_create(
                             organization=org,
                             name=f"{category.title()} Tools Overlap",
                             defaults={
-                                'description': f"Multiple {category} tools with overlapping functionality",
-                                'overlap_percentage': int(overlap_score * 100)
-                            }
+                                'description': (
+                                    f"Multiple {category} tools with overlapping functionality"
+                                ),
+                                'category': category,
+                                'overlap_score': overlap_score * 100,
+                            },
                         )
                         
-                        group.subscriptions.add(sub1, sub2)
+                        for member_sub in (sub1, sub2):
+                            RedundancyGroupMember.objects.get_or_create(
+                                group=group,
+                                subscription=member_sub,
+                            )
                         
                         if not created:
-                            group.overlap_percentage = max(
-                                group.overlap_percentage,
-                                int(overlap_score * 100)
-                            )
-                            group.save()
+                            group.overlap_score = max(group.overlap_score, overlap_score * 100)
+                            group.save(update_fields=['overlap_score', 'updated_at'])
         
         logger.info(f"Completed redundancy detection for {org.name}")
 
@@ -211,20 +227,17 @@ def calculate_overlap_score(sub1, sub2):
     """Calculate overlap score between two subscriptions"""
     score = 0
     
-    # Same category
     if sub1.vendor and sub2.vendor:
         if sub1.vendor.category == sub2.vendor.category:
             score += 0.3
     
-    # Check user overlap
-    users1 = set(sub1.users.values_list('id', flat=True))
-    users2 = set(sub2.users.values_list('id', flat=True))
+    users1 = set(sub1.subscription_users.values_list('user_id', flat=True))
+    users2 = set(sub2.subscription_users.values_list('user_id', flat=True))
     
     if users1 and users2:
         overlap = len(users1 & users2) / max(len(users1 | users2), 1)
         score += overlap * 0.4
     
-    # Check for known equivalent tools
     equivalents = {
         'slack': ['microsoft_teams', 'discord'],
         'zoom': ['google_meet', 'microsoft_teams'],
@@ -249,14 +262,19 @@ def generate_ai_recommendations(organization_id=None):
     """Generate AI-powered recommendations"""
     from services.models import Subscription, Recommendation
     from users.models import Organization
+    from users.plans import FEATURE_AI_RECOMMENDATIONS, has_feature
 
     client = None
     if getattr(settings, 'OPENAI_API_KEY', None):
         client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
 
-    org_queryset = Organization.objects.all()
+    orgs = Organization.objects.all()
     if organization_id:
-        org_queryset = org_queryset.filter(id=organization_id)
+        orgs = orgs.filter(id=organization_id)
+    org_queryset = [org for org in orgs if has_feature(org, FEATURE_AI_RECOMMENDATIONS)]
+    if not org_queryset:
+        logger.info('Skipping AI recommendations — no entitled organizations')
+        return
 
     for org in org_queryset:
         subscriptions = Subscription.objects.filter(
@@ -298,7 +316,7 @@ def analyze_subscription_with_ai(client, subscription):
         'category': subscription.vendor.category if subscription.vendor else 'unknown',
         'monthly_cost': float(subscription.monthly_cost or 0),
         'total_licenses': subscription.total_licenses,
-        'used_licenses': subscription.assigned_licenses,
+        'used_licenses': subscription.used_licenses,
         'utilization_rate': subscription.utilization_rate,
         'last_usage': str(subscription.last_usage_at) if subscription.last_usage_at else 'never',
         'renewal_date': str(subscription.renewal_date) if subscription.renewal_date else None
@@ -356,44 +374,57 @@ def check_renewal_alerts():
     from users.models import Notification
     
     now = timezone.now()
-    alert_thresholds = [90, 60, 30, 14, 7]  # Days before renewal
+    alert_thresholds = [90, 60, 30, 14, 7]
     
     for days in alert_thresholds:
-        threshold_date = now + timezone.timedelta(days=days)
+        threshold_date = (now + timezone.timedelta(days=days)).date()
         
         subscriptions = Subscription.objects.filter(
             status='active',
-            renewal_date__date=threshold_date.date()
+            renewal_date=threshold_date,
         ).select_related('organization', 'owner')
         
         for subscription in subscriptions:
-            # Check if alert already exists
             existing = Alert.objects.filter(
                 subscription=subscription,
-                type='renewal',
-                created_at__gte=now - timezone.timedelta(days=1)
+                alert_type=Alert.AlertType.RENEWAL,
+                created_at__gte=now - timezone.timedelta(days=1),
             ).exists()
             
             if existing:
                 continue
             
-            # Create alert
+            severity = (
+                Alert.Severity.ERROR if days <= 14 else Alert.Severity.WARNING
+            )
             alert = Alert.objects.create(
+                organization=subscription.organization,
                 subscription=subscription,
-                type='renewal',
-                severity='high' if days <= 14 else 'medium',
+                alert_type=Alert.AlertType.RENEWAL,
+                severity=severity,
                 title=f"Renewal in {days} days",
-                message=f"{subscription.name} will renew on {subscription.renewal_date.strftime('%B %d, %Y')} for ${subscription.monthly_cost}/month"
+                message=(
+                    f"{subscription.name} will renew on "
+                    f"{subscription.renewal_date.strftime('%B %d, %Y')} "
+                    f"for ${subscription.monthly_cost}/month"
+                ),
+                action_required=True,
+                action_url=f"/subscriptions/{subscription.id}",
             )
             
-            # Create notification for owner
             if subscription.owner:
                 Notification.objects.create(
                     user=subscription.owner,
-                    type='alert',
+                    organization=subscription.organization,
+                    type=Notification.NotificationType.RENEWAL,
+                    priority=(
+                        Notification.Priority.HIGH
+                        if days <= 14
+                        else Notification.Priority.MEDIUM
+                    ),
                     title=alert.title,
                     message=alert.message,
-                    action_url=f"/subscriptions/{subscription.id}"
+                    action_url=alert.action_url,
                 )
     
     logger.info("Completed renewal alerts check")
@@ -402,200 +433,210 @@ def check_renewal_alerts():
 @shared_task
 def generate_cost_report():
     """Generate monthly cost reports"""
-    from services.models import Subscription, CostRecord, SavingsReport
+    from decimal import Decimal
+    from calendar import monthrange
+    from services.models import Subscription, CostRecord, SavingsReport, Recommendation
     from users.models import Organization
     
     now = timezone.now()
     month_start = now.replace(day=1).date()
+    last_day = monthrange(month_start.year, month_start.month)[1]
+    month_end = month_start.replace(day=last_day)
     
     for org in Organization.objects.all():
-        subscriptions = Subscription.objects.filter(
-            organization=org,
-            status='active'
+        subscriptions = list(
+            Subscription.objects.filter(organization=org, status='active')
         )
         
-        # Create cost records
+        total_cost = Decimal('0')
         for subscription in subscriptions:
+            amount = subscription.monthly_cost or Decimal('0')
+            total_cost += amount
             CostRecord.objects.get_or_create(
                 subscription=subscription,
+                organization=org,
                 period_start=month_start,
+                record_type=CostRecord.RecordType.INVOICE,
                 defaults={
-                    'period_end': month_start,
-                    'amount': subscription.monthly_cost or 0,
-                    'currency': 'USD',
-                    'record_type': 'actual'
-                }
+                    'period_end': month_end,
+                    'amount': amount,
+                    'currency': subscription.currency or 'USD',
+                    'source': 'cost_report',
+                },
             )
         
-        # Calculate totals
-        total_cost = subscriptions.aggregate(
-            total=Sum('monthly_cost')
-        )['total'] or 0
-        
-        # Create savings report
-        from services.models import Recommendation
-        
         implemented = Recommendation.objects.filter(
-            subscription__organization=org,
-            status='implemented',
-            implemented_at__month=now.month,
-            implemented_at__year=now.year
-        )
-        
-        savings = implemented.aggregate(
-            total=Sum('estimated_savings')
-        )['total'] or 0
-        
-        SavingsReport.objects.create(
             organization=org,
+            status=Recommendation.Status.COMPLETED,
+            reviewed_at__month=now.month,
+            reviewed_at__year=now.year,
+        )
+        savings = implemented.aggregate(total=Sum('estimated_savings'))['total'] or Decimal('0')
+        
+        SavingsReport.objects.update_or_create(
+            organization=org,
+            period=SavingsReport.Period.MONTHLY,
             period_start=month_start,
-            period_end=now.date(),
-            total_spend=total_cost,
-            total_subscriptions=subscriptions.count(),
-            recommendations_implemented=implemented.count(),
-            actual_savings=savings,
-            projected_annual_savings=savings * 12
+            defaults={
+                'period_end': month_end,
+                'total_spend': total_cost,
+                'optimized_spend': max(total_cost - savings, Decimal('0')),
+                'total_savings': savings,
+                'subscriptions_analyzed': len(subscriptions),
+                'recommendations_implemented': implemented.count(),
+            },
         )
         
         logger.info(f"Generated cost report for {org.name}")
 
 
-@shared_task
-def process_workflow(workflow_id):
-    """Process an automated workflow"""
-    from services.models import Workflow
-    from users.models import Notification
-    
-    try:
-        workflow = Workflow.objects.get(id=workflow_id)
-        
-        if workflow.status != 'pending':
-            return
-        
-        workflow.status = 'in_progress'
-        workflow.save()
-        
-        # Process each step
-        for step in workflow.steps.order_by('order'):
-            try:
-                result = execute_workflow_step(step)
-                step.status = 'completed'
-                step.completed_at = timezone.now()
-                step.result_data = result
-                step.save()
-                
-            except Exception as e:
-                step.status = 'failed'
-                step.error_message = str(e)
-                step.save()
-                
-                workflow.status = 'failed'
-                workflow.save()
-                
-                logger.error(f"Workflow step {step.id} failed: {e}")
-                return
-        
-        workflow.status = 'completed'
-        workflow.completed_at = timezone.now()
-        workflow.save()
-        
-        # Notify creator
-        if workflow.created_by:
-            Notification.objects.create(
-                user=workflow.created_by,
-                type='workflow',
-                title=f"Workflow completed: {workflow.name}",
-                message="Your workflow has completed successfully.",
-                action_url=f"/workflows/{workflow.id}"
-            )
-        
-        logger.info(f"Workflow {workflow.name} completed")
-        
-    except Workflow.DoesNotExist:
-        logger.error(f"Workflow {workflow_id} not found")
+def _notify_workflow_users(workflow, config):
+    from users.models import Notification, User
 
-
-def execute_workflow_step(step):
-    """Execute a single workflow step"""
-    from services.models import Subscription
-    
-    action = step.action
-    params = step.action_params or {}
-    
-    if action == 'notify':
-        # Send notification
-        from users.models import User, Notification
-        user_ids = params.get('user_ids', [])
-        message = params.get('message', '')
-        
-        for user_id in user_ids:
-            try:
-                user = User.objects.get(id=user_id)
-                Notification.objects.create(
-                    user=user,
-                    type='workflow',
-                    title=params.get('title', 'Workflow Notification'),
-                    message=message
-                )
-            except User.DoesNotExist:
-                pass
-        
-        return {'notified_users': len(user_ids)}
-    
-    elif action == 'cancel_subscription':
-        subscription_id = params.get('subscription_id')
-        subscription = Subscription.objects.get(id=subscription_id)
-        subscription.status = 'cancelled'
-        subscription.cancelled_at = timezone.now()
-        subscription.save()
-        return {'cancelled': True}
-    
-    elif action == 'downgrade_subscription':
-        subscription_id = params.get('subscription_id')
-        new_licenses = params.get('new_licenses')
-        
-        subscription = Subscription.objects.get(id=subscription_id)
-        old_licenses = subscription.total_licenses
-        subscription.total_licenses = new_licenses
-        subscription.save()
-        
-        return {'old_licenses': old_licenses, 'new_licenses': new_licenses}
-    
-    elif action == 'send_email':
-        from django.core.mail import send_mail
-        
-        send_mail(
-            params.get('subject', ''),
-            params.get('body', ''),
-            settings.DEFAULT_FROM_EMAIL,
-            params.get('recipients', []),
-            fail_silently=False
-        )
-        return {'sent': True}
-    
-    elif action == 'webhook':
-        import requests
-        
-        response = requests.post(
-            params.get('url'),
-            json=params.get('payload', {}),
-            headers=params.get('headers', {}),
-            timeout=30
-        )
-        return {'status_code': response.status_code}
-    
-    elif action == 'wait':
-        import time
-        seconds = params.get('seconds', 0)
-        time.sleep(min(seconds, 300))  # Max 5 minutes
-        return {'waited': seconds}
-    
-    elif action == 'approval':
-        # Approval steps are handled separately
-        return {'requires_approval': True}
-    
+    org = workflow.organization
+    user_ids = config.get('user_ids') or config.get('assignee_ids') or []
+    title = config.get('title') or f'Workflow: {workflow.name}'
+    message = config.get('message') or config.get('description') or workflow.description or 'Workflow notification'
+    if user_ids:
+        users = User.objects.filter(organization=org, id__in=user_ids)
+    elif workflow.created_by_id:
+        users = User.objects.filter(id=workflow.created_by_id)
     else:
-        raise ValueError(f"Unknown action: {action}")
+        users = User.objects.none()
+
+    notified = 0
+    for user in users:
+        Notification.objects.create(
+            user=user,
+            organization=org,
+            type=Notification.NotificationType.WORKFLOW,
+            title=title,
+            message=message,
+            action_url=config.get('action_url') or f'/workflows/{workflow.id}',
+        )
+        notified += 1
+    return {'notified_users': notified}
+
+
+def _dispatch_automation_action(workflow, config):
+    """Run one AutomationWorkflow action; return output dict or raise."""
+    from services.models import AutomationWorkflow, Subscription, Workflow
+
+    action = workflow.action
+    org = workflow.organization
+    config = config or {}
+
+    if action in (AutomationWorkflow.Action.NOTIFY, AutomationWorkflow.Action.CREATE_TASK):
+        if action == AutomationWorkflow.Action.CREATE_TASK and not config.get('title'):
+            config = {
+                **config,
+                'title': f'Task: {workflow.name}',
+            }
+        return _notify_workflow_users(workflow, config)
+
+    if action == AutomationWorkflow.Action.SEND_EMAIL:
+        from django.core.mail import send_mail
+
+        recipients = config.get('recipients') or config.get('to') or []
+        if isinstance(recipients, str):
+            recipients = [recipients]
+        if not recipients:
+            raise ValueError('send_email requires recipients')
+        send_mail(
+            config.get('subject') or f'[SWM] {workflow.name}',
+            config.get('body') or config.get('message') or '',
+            settings.DEFAULT_FROM_EMAIL,
+            recipients,
+            fail_silently=False,
+        )
+        return {'sent': True, 'recipients': len(recipients)}
+
+    if action == AutomationWorkflow.Action.SEND_SLACK:
+        import requests
+        from integrations.models import Integration
+
+        message = config.get('message') or config.get('text') or workflow.name
+        slack = Integration.objects.filter(
+            organization=org,
+            type=Integration.IntegrationType.SLACK,
+            status=Integration.Status.CONNECTED,
+        ).first()
+        if not slack:
+            raise ValueError('No connected Slack integration')
+        creds = slack.get_decrypted_credentials()
+        webhook_url = creds.get('webhook_url') or (slack.config or {}).get('webhook_url')
+        if not webhook_url:
+            raise ValueError('No Slack webhook URL configured')
+        channel = (
+            config.get('channel')
+            or (slack.config or {}).get('channel_name')
+            or 'alerts'
+        )
+        response = requests.post(
+            webhook_url,
+            json={'text': message, 'channel': channel},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            raise ValueError(f'Slack webhook error: {response.status_code}')
+        return {'slack_sent': True}
+
+    if action == AutomationWorkflow.Action.WEBHOOK:
+        import requests
+
+        url = config.get('url')
+        if not url:
+            raise ValueError('webhook requires url')
+        response = requests.post(
+            url,
+            json=config.get('payload') or {'workflow_id': str(workflow.id), 'name': workflow.name},
+            headers=config.get('headers') or {'Content-Type': 'application/json'},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return {'status_code': response.status_code}
+
+    if action == AutomationWorkflow.Action.UPDATE_SUBSCRIPTION:
+        subscription_id = config.get('subscription_id')
+        if not subscription_id:
+            raise ValueError('update_subscription requires subscription_id')
+        subscription = Subscription.objects.get(id=subscription_id, organization=org)
+        updates = {}
+        if 'status' in config:
+            updates['status'] = config['status']
+        if 'total_licenses' in config:
+            updates['total_licenses'] = config['total_licenses']
+        if 'auto_renew' in config:
+            updates['auto_renew'] = config['auto_renew']
+        if not updates:
+            raise ValueError('update_subscription requires fields to change')
+        for key, value in updates.items():
+            setattr(subscription, key, value)
+        subscription.save(update_fields=list(updates.keys()) + ['updated_at'])
+        return {'updated': updates}
+
+    if action == AutomationWorkflow.Action.CREATE_APPROVAL:
+        subscription_id = config.get('subscription_id')
+        subscription = None
+        if subscription_id:
+            subscription = Subscription.objects.filter(id=subscription_id, organization=org).first()
+        workflow_type = config.get('workflow_type') or config.get('type') or Workflow.WorkflowType.LICENSE_CHANGE
+        if workflow_type not in Workflow.WorkflowType.values:
+            workflow_type = Workflow.WorkflowType.LICENSE_CHANGE
+        approval = Workflow.objects.create(
+            organization=org,
+            subscription=subscription,
+            title=config.get('title') or workflow.name,
+            description=config.get('description') or workflow.description or workflow.name,
+            workflow_type=workflow_type,
+            status=Workflow.Status.PENDING,
+            requested_by=workflow.created_by,
+            submitted_at=timezone.now(),
+            request_data=config.get('request_data') or {},
+        )
+        return {'approval_id': str(approval.id)}
+
+    raise ValueError(f'Unsupported workflow action: {action}')
 
 
 @shared_task
@@ -607,24 +648,28 @@ def sync_vendor_catalog():
     # For now, we'll use a static list of common SaaS tools
     
     vendors = [
-        {'name': 'Slack', 'category': 'collaboration', 'website': 'https://slack.com'},
-        {'name': 'Zoom', 'category': 'video_conferencing', 'website': 'https://zoom.us'},
+        {'name': 'Slack', 'category': 'communication', 'website': 'https://slack.com'},
+        {'name': 'Zoom', 'category': 'communication', 'website': 'https://zoom.us'},
         {'name': 'Salesforce', 'category': 'crm', 'website': 'https://salesforce.com'},
         {'name': 'HubSpot', 'category': 'marketing', 'website': 'https://hubspot.com'},
-        {'name': 'Jira', 'category': 'project_management', 'website': 'https://atlassian.com/jira'},
+        {'name': 'Jira', 'category': 'project_mgmt', 'website': 'https://atlassian.com/jira'},
         {'name': 'GitHub', 'category': 'development', 'website': 'https://github.com'},
-        {'name': 'AWS', 'category': 'cloud_infrastructure', 'website': 'https://aws.amazon.com'},
+        {'name': 'AWS', 'category': 'cloud', 'website': 'https://aws.amazon.com'},
         {'name': 'Google Workspace', 'category': 'productivity', 'website': 'https://workspace.google.com'},
         {'name': 'Microsoft 365', 'category': 'productivity', 'website': 'https://microsoft.com/microsoft-365'},
         {'name': 'Notion', 'category': 'productivity', 'website': 'https://notion.so'},
     ]
     
+    from django.utils.text import slugify
+
     for vendor_data in vendors:
         SoftwareVendor.objects.update_or_create(
             name=vendor_data['name'],
             defaults={
+                'slug': slugify(vendor_data['name']),
                 'category': vendor_data['category'],
-                'website': vendor_data['website']
+                'website': vendor_data['website'],
+                'is_verified': True,
             }
         )
     
@@ -636,8 +681,9 @@ def execute_automation_workflow(self, workflow_id, execution_id=None):
     """Execute an automation workflow and persist execution result."""
     from services.models import AutomationWorkflow, WorkflowExecution
 
+    execution = None
     try:
-        workflow = AutomationWorkflow.objects.get(id=workflow_id)
+        workflow = AutomationWorkflow.objects.select_related('organization', 'created_by').get(id=workflow_id)
         if execution_id:
             execution = WorkflowExecution.objects.get(id=execution_id, workflow=workflow)
         else:
@@ -648,36 +694,43 @@ def execute_automation_workflow(self, workflow_id, execution_id=None):
                 total_steps=1,
             )
 
+        result = _dispatch_automation_action(workflow, workflow.action_config or {})
         output = {
             'action': workflow.action,
-            'action_config': workflow.action_config,
             'trigger': workflow.trigger,
-            'trigger_config': workflow.trigger_config,
+            'result': result,
         }
 
-        # Placeholder execution engine: persist config and mark successful.
         execution.steps_completed = execution.total_steps
         execution.status = WorkflowExecution.Status.COMPLETED
         execution.output_data = output
         execution.completed_at = timezone.now()
+        execution.error_message = ''
         execution.save(update_fields=[
-            'steps_completed', 'status', 'output_data', 'completed_at'
+            'steps_completed', 'status', 'output_data', 'completed_at', 'error_message',
         ])
 
         workflow.last_run_at = timezone.now()
         workflow.run_count += 1
         workflow.save(update_fields=['last_run_at', 'run_count', 'updated_at'])
 
-        return {'execution_id': str(execution.id), 'status': execution.status}
+        return {'execution_id': str(execution.id), 'status': execution.status, 'result': result}
     except Exception as e:
         logger.error(f"Failed to execute automation workflow {workflow_id}: {e}")
-        if execution_id:
-            from services.models import WorkflowExecution
+        if execution is not None:
+            execution.status = WorkflowExecution.Status.FAILED
+            execution.error_message = str(e)
+            execution.completed_at = timezone.now()
+            execution.save(update_fields=['status', 'error_message', 'completed_at'])
+        elif execution_id:
             WorkflowExecution.objects.filter(id=execution_id).update(
                 status=WorkflowExecution.Status.FAILED,
                 error_message=str(e),
                 completed_at=timezone.now(),
             )
+        # Do not retry config/validation failures
+        if isinstance(e, ValueError):
+            return {'status': 'failed', 'error': str(e)}
         raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
 

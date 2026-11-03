@@ -25,6 +25,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.ruff_cache/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -200,6 +201,9 @@ jspm_packages/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.prod
+**/.env.prod
+backend/.env.prod
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -224,6 +228,11 @@ public
 # Temporary folders
 tmp/
 temp/
+
+.cache-dev.md
+.cache.*.md
+tmp.*.md
+temp.*.md
 
 # Editor directories and files
 .vscode/*

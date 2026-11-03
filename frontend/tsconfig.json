@@ -28,7 +28,8 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "**/*.mts",
+    "scripts/guard-js-configs.mjs.d.ts"
   ],
   "exclude": ["node_modules"]
 }

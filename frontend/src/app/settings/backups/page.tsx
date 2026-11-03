@@ -76,7 +76,7 @@ export default function BackupsPage() {
   });
   
   const [exportForm, setExportForm] = useState({
-    format: 'json' as 'json' | 'csv',
+    format: 'json' as 'json' | 'csv' | 'excel',
     include_subscriptions: true,
     include_usage: true,
     include_costs: true,
@@ -96,7 +96,7 @@ export default function BackupsPage() {
       setBackups(backupsData);
       setExports(exportsData);
       setImports(importsData);
-    } catch (error) {
+    } catch {
     } finally {
       setIsLoading(false);
     }
@@ -121,7 +121,7 @@ export default function BackupsPage() {
         is_active: true,
       });
       toast.success('Backup schedule created');
-    } catch (error) {
+    } catch {
       toast.error('Failed to create backup schedule');
     }
   };
@@ -131,7 +131,7 @@ export default function BackupsPage() {
       const updated = await backupsApi.updateSchedule(id, { is_active: isActive });
       setSchedules(schedules.map((s) => (s.id === id ? updated : s)));
       toast.success(`Schedule ${isActive ? 'enabled' : 'disabled'}`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to update schedule');
     }
   };
@@ -141,7 +141,7 @@ export default function BackupsPage() {
       await backupsApi.deleteSchedule(id);
       setSchedules(schedules.filter((s) => s.id !== id));
       toast.success('Schedule deleted');
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete schedule');
     }
   };
@@ -158,28 +158,36 @@ export default function BackupsPage() {
 
   const handleCreateExport = async () => {
     try {
+      const dataTypes: string[] = [];
+      if (exportForm.include_subscriptions) dataTypes.push('subscriptions');
+      if (exportForm.include_usage) dataTypes.push('usage');
+      if (exportForm.include_costs) dataTypes.push('costs');
+      if (exportForm.include_recommendations) dataTypes.push('recommendations');
+
       const dataExport = await backupsApi.createExport({
-        export_type: 'full',
         format: exportForm.format,
-        filters: {
-          include_subscriptions: exportForm.include_subscriptions,
-          include_usage: exportForm.include_usage,
-          include_costs: exportForm.include_costs,
-          include_recommendations: exportForm.include_recommendations,
-        },
+        data_types: dataTypes.length ? dataTypes : ['subscriptions'],
+        export_type: dataTypes.length > 1 ? 'custom' : (dataTypes[0] || 'subscriptions'),
       });
       setExports([dataExport, ...exports]);
       setShowExportDialog(false);
       toast.success('Export started');
-    } catch (error) {
+    } catch {
       toast.error('Failed to create export');
     }
   };
 
   const handleDownloadExport = async (id: string) => {
     try {
-      const response = await backupsApi.downloadExport(id);
-      window.open(response.download_url, '_blank');
+      const blob = await backupsApi.downloadExport(id);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `export-${id}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
       toast.success('Download started');
     } catch {
       toast.error('Failed to download export');
@@ -192,7 +200,7 @@ export default function BackupsPage() {
       setImports([importJob, ...imports]);
       setShowImportDialog(false);
       toast.success('Import started');
-    } catch (error) {
+    } catch {
       toast.error('Failed to start import');
     }
   };
@@ -201,7 +209,7 @@ export default function BackupsPage() {
     try {
       await backupsApi.restoreBackup(id);
       toast.success('Restore started');
-    } catch (error) {
+    } catch {
       toast.error('Failed to start restore');
     }
   };
@@ -567,7 +575,7 @@ export default function BackupsPage() {
                             onValueChange={(v) =>
                               setExportForm({
                                 ...exportForm,
-                                format: v as 'json' | 'csv',
+                                format: v as 'json' | 'csv' | 'excel',
                               })
                             }
                           >
@@ -585,6 +593,12 @@ export default function BackupsPage() {
                                 <div className="flex items-center gap-2">
                                   <FileText className="h-4 w-4" />
                                   CSV
+                                </div>
+                              </SelectItem>
+                              <SelectItem value="excel">
+                                <div className="flex items-center gap-2">
+                                  <FileText className="h-4 w-4" />
+                                  Excel
                                 </div>
                               </SelectItem>
                             </SelectContent>

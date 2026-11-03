@@ -1,104 +1,96 @@
 # Subscription Waste Manager
 
-A comprehensive SaaS platform for managing and optimizing subscription services to reduce waste and costs.
+SaaS app for discovering, tracking, and cutting wasted software subscriptions. Django REST API plus a Next.js dashboard.
 
-## Overview
+## Stack
 
-This application helps users track, analyze, and optimize their subscription services across multiple platforms. It provides insights into subscription usage patterns, identifies potential waste, and offers recommendations for cost savings.
+- **API:** Django 6, DRF, JWT, Celery, Channels
+- **UI:** Next.js (App Router) on port 3000
+- **Data:** PostgreSQL in Docker / production, SQLite for local tests
+- **Queue/cache:** Redis
 
-## Architecture
+## Quick start with Docker
 
-This project consists of two main components:
+```bash
+docker compose up --build
+```
 
-- **Backend**: Django REST API with PostgreSQL database
-- **Frontend**: Next.js React application
+Then open [http://localhost:3000](http://localhost:3000). API: [http://localhost:8000/api/docs/](http://localhost:8000/api/docs/). Health: [http://localhost:8000/api/v1/health/](http://localhost:8000/api/v1/health/).
 
-## Features
+Copy `backend/.env.example` to `backend/.env` if you want OAuth, Stripe, or Plaid keys. Compose already sets database and Redis URLs.
 
-- User authentication and authorization
-- Subscription tracking and management
-- Analytics and reporting
-- AI-powered recommendations
-- Integration with popular subscription services
-- Automated backup and security features
-- Real-time notifications
+## Local development (no Docker)
 
-## Getting Started
+### Backend
 
-### Prerequisites
+```bash
+cd backend
+python -m venv venv
+venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
+pip install -r requirements.txt
+copy .env.example .env         # macOS/Linux: cp .env.example .env
+python manage.py migrate
+python manage.py runserver
+```
 
-- Python 3.8+
-- Node.js 18+
-- PostgreSQL (for production) or SQLite (for development)
+Optional worker (needs Redis):
 
-### Backend Setup
+```bash
+celery -A backend worker -l info
+```
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
+Tests use SQLite and in-memory cache automatically:
 
-2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+```bash
+python manage.py test
+```
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### Frontend
 
-4. Run migrations:
-   ```bash
-   python manage.py migrate
-   ```
+```bash
+cd frontend
+copy .env.example .env.local   # macOS/Linux: cp .env.example .env.local
+npm install
+npm run dev
+```
 
-5. Create a superuser:
-   ```bash
-   python manage.py createsuperuser
-   ```
+`NEXT_PUBLIC_API_URL` must be `http://localhost:8000/api/v1` (the `/api/v1` prefix is required). Pointing it at port 3000 will break login.
 
-6. Start the development server:
-   ```bash
-   python manage.py runserver
-   ```
+```bash
+npm run type-check
+npm run lint
+```
 
-### Frontend Setup
+## Environment
 
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
+| Variable | Where | Purpose |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | frontend `.env.local` | `http://localhost:8000/api/v1` |
+| `DATABASE_URL` | backend | Postgres URL (SQLite if unset) |
+| `REDIS_URL` / `CELERY_BROKER_URL` | backend | Cache, Channels, Celery |
+| `FRONTEND_URL` | backend | Invite, reset, and OAuth redirect origin |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | backend | Google Workspace + login |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | backend | Microsoft 365 + login |
+| `PLAID_CLIENT_ID` / `PLAID_SECRET` | backend | Bank feeds |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRICE_PRO` | backend | Billing |
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+OAuth redirect URIs to register with Google/Microsoft:
 
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
+- `http://localhost:3000/integrations/google/callback`
+- `http://localhost:3000/integrations/microsoft/callback`
 
-4. Open [http://localhost:3000](http://localhost:3000) in your browser.
+Stripe webhook: `http://localhost:8000/api/v1/auth/billing/webhook/`
 
-## Environment Variables
+## What works today
 
-Create `.env` files in both backend and frontend directories based on the provided `.env.example` files.
+- Auth, invites, MFA, org/notification settings
+- Subscription CRUD, dashboard, recommendations, workflows
+- Google Workspace, Microsoft 365, Plaid, email scan
+- Slack incoming webhooks, Okta, Azure AD
+- Stripe Checkout for Pro (when price IDs are set)
 
-## API Documentation
-
-Once the backend is running, visit `http://localhost:8000/api/docs/` for API documentation.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests
-5. Submit a pull request
+Still coming later: Microsoft Teams notifications, QuickBooks, Xero, and other accounting/HR connectors.
 
 ## License
 
-This project is licensed under the MIT License.
+MIT

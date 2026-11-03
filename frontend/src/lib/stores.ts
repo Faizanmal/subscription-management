@@ -3,6 +3,7 @@
  */
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { persistAuthTokens } from './api-base';
 import { immer } from 'zustand/middleware/immer';
 import type {
   User,
@@ -40,7 +41,7 @@ interface AuthState {
   register: (data: {
     email: string;
     password: string;
-    password2: string;
+    password_confirm: string;
     first_name: string;
     last_name: string;
     organization_name: string;
@@ -71,6 +72,7 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           const tokens = await authApi.login({ email, password });
+          persistAuthTokens(tokens.access, tokens.refresh);
           set((state) => {
             state.accessToken = tokens.access;
             state.refreshToken = tokens.refresh;
@@ -99,6 +101,7 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           const result = await authApi.register(data);
+          persistAuthTokens(result.tokens.access, result.tokens.refresh);
           set((state) => {
             state.user = result.user;
             state.accessToken = result.tokens.access;
@@ -120,7 +123,7 @@ export const useAuthStore = create<AuthState>()(
 
       logout: async () => {
         try {
-          await authApi.logout();
+          await authApi.logout(get().refreshToken);
         } catch {
           // Ignore logout errors
         } finally {
@@ -160,6 +163,7 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setTokens: (access, refresh) => {
+        persistAuthTokens(access, refresh);
         set((state) => {
           state.accessToken = access;
           state.refreshToken = refresh;
@@ -535,11 +539,11 @@ export const useRecommendationsStore = create<RecommendationsState>()(
     generateRecommendations: async () => {
       set((state) => {
         state.isLoading = true;
+        state.error = null;
       });
 
       try {
         await recommendationsApi.generate();
-        // Refresh recommendations after generation
         const response = await recommendationsApi.list();
         set((state) => {
           state.recommendations = response.results;
@@ -549,6 +553,7 @@ export const useRecommendationsStore = create<RecommendationsState>()(
         set((state) => {
           state.error = message;
         });
+        throw error;
       } finally {
         set((state) => {
           state.isLoading = false;

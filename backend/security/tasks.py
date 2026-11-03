@@ -28,10 +28,10 @@ def send_mfa_code(device_id):
         # Store code in cache (5 minute expiry)
         cache.set(f'mfa_code_{device.id}', code, 300)
         
-        if device.type == 'sms':
+        if device.device_type == 'sms':
             # Send via SMS (using Twilio or similar)
             send_sms_code(device.phone_number, code)
-        elif device.type == 'email':
+        elif device.device_type == 'email':
             # Send via email
             send_mail(
                 'Your verification code',

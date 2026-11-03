@@ -20,6 +20,7 @@ export interface User {
   email_verified: boolean;
   organization_id: string;
   organization_name?: string;
+  notification_preferences?: Record<string, unknown>;
   last_login?: string;
   date_joined?: string;
   created_at: string;
@@ -35,6 +36,7 @@ export interface Organization {
   domain?: string;
   logo?: string;
   plan: PlanType;
+  default_currency?: string;
   plan_expires_at?: string;
   settings: OrganizationSettings;
   subscription_count: number;
@@ -44,7 +46,33 @@ export interface Organization {
   updated_at: string;
 }
 
-export type PlanType = 'free' | 'starter' | 'professional' | 'enterprise';
+export type PlanType = 'free' | 'starter' | 'pro' | 'professional' | 'enterprise';
+
+export interface BillingPlanOption {
+  id: string;
+  name: string;
+  price: string;
+  period: string;
+  description: string;
+  checkout_enabled: boolean;
+}
+
+export interface BillingStatus {
+  plan: PlanType | string;
+  plan_label: string;
+  effective_plan?: PlanType | string;
+  trial_ends_at?: string | null;
+  is_on_trial: boolean;
+  has_pro_access?: boolean;
+  features?: Record<string, boolean>;
+  feature_labels?: Record<string, string>;
+  seat_limit?: number | null;
+  subscription_limit?: number | null;
+  stripe_configured: boolean;
+  has_stripe_customer: boolean;
+  has_stripe_subscription: boolean;
+  plans: BillingPlanOption[];
+}
 
 export interface OrganizationSettings {
   currency: string;
@@ -126,15 +154,18 @@ export interface Subscription {
   description?: string;
   status: SubscriptionStatus;
   billing_cycle: BillingCycle;
+  cost_per_unit?: number;
   monthly_cost: number;
   annual_cost: number;
   currency: string;
   start_date: string;
+  end_date?: string;
   renewal_date?: string;
   cancellation_date?: string;
   contract_end_date?: string;
   auto_renew: boolean;
   total_licenses: number;
+  used_licenses?: number;
   assigned_licenses: number;
   utilization_rate: number;
   owner_id?: string;
@@ -151,8 +182,8 @@ export interface Subscription {
   updated_at: string;
 }
 
-export type SubscriptionStatus = 'active' | 'trial' | 'expiring' | 'expired' | 'cancelled' | 'suspended' | 'pending';
-export type BillingCycle = 'monthly' | 'quarterly' | 'annual' | 'one_time' | 'usage_based';
+export type SubscriptionStatus = 'active' | 'trial' | 'inactive' | 'expired' | 'cancelled' | 'suspended' | 'pending' | 'expiring';
+export type BillingCycle = 'monthly' | 'quarterly' | 'semi_annual' | 'annual' | 'custom' | 'one_time' | 'usage_based';
 export type PaymentMethod = 'credit_card' | 'invoice' | 'bank_transfer' | 'paypal' | 'other';
 export type DiscoverySource = 'manual' | 'email_scan' | 'bank_feed' | 'sso' | 'expense_report' | 'api';
 
@@ -405,12 +436,14 @@ export type IntegrationType =
   | 'xero'
   | 'plaid'
   | 'slack'
+  | 'teams'
+  | 'email_scan'
   | 'jira'
   | 'salesforce'
   | 'hubspot'
   | 'custom_api';
 
-export type IntegrationStatus = 'active' | 'inactive' | 'error' | 'pending_auth';
+export type IntegrationStatus = 'active' | 'connected' | 'inactive' | 'disconnected' | 'error' | 'pending' | 'pending_auth' | 'expired';
 
 export interface BankAccount {
   id: string;
@@ -480,6 +513,23 @@ export interface SlackNotification {
   created_at: string;
 }
 
+export interface EmailScanConfig {
+  id: string;
+  organization?: string;
+  integration: string;
+  enabled: boolean;
+  is_active?: boolean;
+  scan_invoices: boolean;
+  scan_receipts: boolean;
+  scan_welcome_emails: boolean;
+  mailboxes: string[];
+  sender_patterns: string[];
+  subject_patterns: string[];
+  last_scan?: string;
+  last_scan_at?: string;
+  last_scan_result?: Record<string, unknown>;
+}
+
 // ==================== Security Types ====================
 
 export interface APIKey {
@@ -497,8 +547,10 @@ export interface APIKey {
 
 export interface MFADevice {
   id: string;
-  user_id: string;
-  type: 'totp' | 'sms' | 'email';
+  user_id?: string;
+  user?: string;
+  device_type?: 'totp' | 'sms' | 'email' | 'webauthn' | 'backup';
+  type?: 'totp' | 'sms' | 'email';
   name?: string;
   is_primary: boolean;
   is_verified: boolean;
@@ -587,15 +639,29 @@ export interface Backup {
 
 export interface DataExport {
   id: string;
-  organization_id: string;
-  export_type: 'subscriptions' | 'costs' | 'usage' | 'recommendations' | 'audit_logs' | 'full';
-  format: 'csv' | 'json' | 'xlsx';
+  organization?: string;
+  organization_id?: string;
+  requested_by?: string;
+  export_type: 'subscriptions' | 'costs' | 'usage' | 'recommendations' | 'savings' | 'full' | 'custom' | 'audit_logs';
+  format: 'csv' | 'json' | 'excel' | 'pdf' | 'xlsx';
+  data_types?: string[];
   filters?: Record<string, unknown>;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  date_from?: string | null;
+  date_to?: string | null;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'expired';
+  file_path?: string;
   file_url?: string;
+  download_url?: string;
+  file_size?: number;
   size?: number;
+  size_display?: string;
+  expires_at?: string | null;
+  download_count?: number;
+  progress?: number;
+  records_exported?: number;
   error_message?: string;
   created_at: string;
+  started_at?: string;
   completed_at?: string;
 }
 
@@ -624,20 +690,26 @@ export interface ImportJob {
 
 export interface Notification {
   id: string;
-  user_id: string;
+  user_id?: string;
   type: NotificationType;
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   title: string;
   message: string;
   link?: string;
+  action_url?: string | null;
   is_read: boolean;
   read_at?: string;
   created_at: string;
 }
 
-export type NotificationType = 
+export type NotificationType =
+  | 'alert'
+  | 'renewal'
+  | 'recommendation'
+  | 'workflow'
+  | 'system'
   | 'renewal_reminder'
   | 'budget_alert'
-  | 'recommendation'
   | 'integration_error'
   | 'team_invite'
   | 'subscription_added'
@@ -703,7 +775,7 @@ export interface LoginCredentials {
 export interface RegisterData {
   email: string;
   password: string;
-  password2: string;
+  password_confirm: string;
   first_name: string;
   last_name: string;
   organization_name: string;

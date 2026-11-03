@@ -3,10 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "dev": "node scripts/run-guarded.mjs next dev",
+    "build": "node scripts/run-guarded.mjs next build",
+    "start": "node scripts/run-guarded.mjs next start",
+    "lint": "node scripts/run-guarded.mjs eslint",
+    "type-check": "node scripts/run-guarded.mjs tsc --noEmit",
+    "guard": "node scripts/guard-js-configs.mjs",
+    "test:guard": "node --test scripts/guard-js-configs.test.mjs",
+    "hooks:install": "node scripts/install-git-hooks.mjs",
+    "prepare": "node scripts/install-git-hooks.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

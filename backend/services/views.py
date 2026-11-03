@@ -32,11 +32,17 @@ from services.serializers import (
     WorkflowExecutionSerializer
 )
 from api.permissions import IsFinance, IsOrgMember
+from users.plans import (
+    FEATURE_AI_RECOMMENDATIONS,
+    FEATURE_WORKFLOWS,
+    require_feature,
+    require_subscription_slot,
+)
 
 
 class SoftwareVendorViewSet(viewsets.ReadOnlyModelViewSet):
     """Software vendor viewset (read-only catalog)"""
-    queryset = SoftwareVendor.objects.filter(is_verified=True)
+    queryset = SoftwareVendor.objects.all()
     serializer_class = SoftwareVendorSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -44,6 +50,15 @@ class SoftwareVendorViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['name']
     pagination_class = None
+
+    @action(detail=False, methods=['get'])
+    def search(self, request):
+        query = (request.query_params.get('q') or request.query_params.get('search') or '').strip()
+        queryset = self.get_queryset()
+        if query:
+            queryset = queryset.filter(Q(name__icontains=query) | Q(description__icontains=query))
+        serializer = self.get_serializer(queryset[:25], many=True)
+        return Response(serializer.data)
 
 
 class SubscriptionViewSet(viewsets.ModelViewSet):
@@ -72,6 +87,12 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(team=user.team)
         
         return queryset.select_related('vendor', 'owner', 'department', 'team')
+
+    def create(self, request, *args, **kwargs):
+        blocked = require_subscription_slot(request.user.organization)
+        if blocked:
+            return blocked
+        return super().create(request, *args, **kwargs)
     
     @action(detail=False, methods=['get'])
     def summary(self, request):
@@ -453,6 +474,10 @@ class RecommendationViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
+        blocked = require_feature(request.user.organization, FEATURE_AI_RECOMMENDATIONS)
+        if blocked:
+            return blocked
+
         from services.tasks import generate_ai_recommendations
 
         task = generate_ai_recommendations.delay(str(request.user.organization.id))
@@ -473,6 +498,12 @@ class AutomationWorkflowViewSet(viewsets.ModelViewSet):
             organization=self.request.user.organization
         ).select_related('created_by')
 
+    def create(self, request, *args, **kwargs):
+        blocked = require_feature(request.user.organization, FEATURE_WORKFLOWS)
+        if blocked:
+            return blocked
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         serializer.save(
             organization=self.request.user.organization,
@@ -481,6 +512,9 @@ class AutomationWorkflowViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def toggle(self, request, pk=None):
+        blocked = require_feature(request.user.organization, FEATURE_WORKFLOWS)
+        if blocked:
+            return blocked
         workflow = self.get_object()
         workflow.is_active = not workflow.is_active
         workflow.save(update_fields=['is_active', 'updated_at'])
@@ -490,6 +524,9 @@ class AutomationWorkflowViewSet(viewsets.ModelViewSet):
     def run(self, request, pk=None):
         from services.tasks import execute_automation_workflow
 
+        blocked = require_feature(request.user.organization, FEATURE_WORKFLOWS)
+        if blocked:
+            return blocked
         workflow = self.get_object()
         execution = WorkflowExecution.objects.create(
             workflow=workflow,
@@ -819,15 +856,15 @@ class DashboardView(generics.GenericAPIView):
         data = {
             'total_subscriptions': subscriptions.count(),
             'active_subscriptions': active_subs.count(),
-            'total_monthly_cost': total_monthly,
-            'total_annual_cost': total_monthly * 12,
+            'total_monthly_cost': float(total_monthly or 0),
+            'total_annual_cost': float((total_monthly or 0) * 12),
             'total_licenses': total_licenses,
             'used_licenses': used_licenses,
             'unused_licenses': total_licenses - used_licenses,
             'avg_utilization': round(
                 (used_licenses / total_licenses * 100) if total_licenses > 0 else 0, 2
             ),
-            'potential_savings': potential_savings,
+            'potential_savings': float(potential_savings or 0),
             'upcoming_renewals': pending_renewals,
             'pending_recommendations': active_recommendations,
             'pending_workflows': pending_workflows,
@@ -835,7 +872,7 @@ class DashboardView(generics.GenericAPIView):
             'currency': org.default_currency,
         }
         
-        serializer = DashboardSummarySerializer(data)
+        serializer = DashboardSummarySerializer(instance=data)
         return Response(serializer.data)
 
 
@@ -930,6 +967,27 @@ class SpendTrendView(generics.GenericAPIView):
             'spend': r['total'],
             'subscription_count': r['count'],
         } for r in records]
+
+        if not trend_data:
+            active_subs = Subscription.objects.filter(organization=org, status='active')
+            monthly = sum((s.monthly_cost or 0) for s in active_subs)
+            count = active_subs.count()
+            start = timezone.now().date().replace(day=1)
+            month_index = start.month - 1 - (months - 1)
+            year = start.year + month_index // 12
+            month = month_index % 12 + 1
+            for _ in range(months):
+                period_date = start.replace(year=year, month=month, day=1)
+                trend_data.append({
+                    'period': period_date.strftime('%Y-%m'),
+                    'date': period_date,
+                    'spend': monthly,
+                    'subscription_count': count,
+                })
+                month += 1
+                if month > 12:
+                    month = 1
+                    year += 1
         
         return Response({
             'trend': trend_data,

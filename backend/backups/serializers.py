@@ -78,21 +78,22 @@ class DataExportSerializer(serializers.ModelSerializer):
     
     format_display = serializers.CharField(source='get_format_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    expires_at = serializers.DateTimeField(source='download_expires_at', read_only=True)
     size_display = serializers.SerializerMethodField()
     
     class Meta:
         model = DataExport
         fields = [
-            'id', 'organization', 'requested_by', 'format', 'format_display',
-            'data_types', 'filters', 'status', 'status_display',
+            'id', 'organization', 'requested_by', 'export_type', 'format', 'format_display',
+            'data_types', 'filters', 'date_from', 'date_to', 'status', 'status_display',
             'started_at', 'completed_at', 'file_path', 'file_size',
             'size_display', 'download_url', 'expires_at', 'download_count',
-            'error_message', 'created_at'
+            'progress', 'records_exported', 'error_message', 'created_at'
         ]
         read_only_fields = [
-            'organization', 'requested_by', 'status', 'started_at', 'completed_at',
+            'organization', 'requested_by', 'export_type', 'status', 'started_at', 'completed_at',
             'file_path', 'file_size', 'download_url', 'expires_at', 'download_count',
-            'error_message', 'created_at'
+            'progress', 'records_exported', 'error_message', 'created_at'
         ]
     
     def get_size_display(self, obj):
@@ -109,22 +110,81 @@ class DataExportSerializer(serializers.ModelSerializer):
 
 class DataExportCreateSerializer(serializers.Serializer):
     """Serializer for creating data export"""
+
+    FORMAT_ALIASES = {
+        'xlsx': DataExport.Format.EXCEL,
+        'xls': DataExport.Format.EXCEL,
+    }
+    DATA_TYPE_CHOICES = [
+        ('subscriptions', 'Subscriptions'),
+        ('usage', 'Usage Data'),
+        ('costs', 'Cost Records'),
+        ('users', 'Users'),
+        ('recommendations', 'Recommendations'),
+        ('alerts', 'Alerts'),
+        ('audit_logs', 'Audit Logs'),
+    ]
     
-    format = serializers.ChoiceField(choices=DataExport.Format.choices)
-    data_types = serializers.ListField(
-        child=serializers.ChoiceField(choices=[
-            ('subscriptions', 'Subscriptions'),
-            ('usage', 'Usage Data'),
-            ('costs', 'Cost Records'),
-            ('users', 'Users'),
-            ('recommendations', 'Recommendations'),
-            ('alerts', 'Alerts'),
-            ('audit_logs', 'Audit Logs'),
-        ]),
-        required=False
+    format = serializers.ChoiceField(
+        choices=list(DataExport.Format.choices) + [('xlsx', 'Excel (xlsx)'), ('xls', 'Excel (xls)')]
     )
-    date_from = serializers.DateField(required=False)
-    date_to = serializers.DateField(required=False)
+    data_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=DATA_TYPE_CHOICES),
+        required=False,
+        allow_empty=True,
+    )
+    export_type = serializers.ChoiceField(
+        choices=DataExport.ExportType.choices,
+        required=False,
+    )
+    filters = serializers.DictField(required=False)
+    date_from = serializers.DateField(required=False, allow_null=True)
+    date_to = serializers.DateField(required=False, allow_null=True)
+
+    def validate_format(self, value):
+        return self.FORMAT_ALIASES.get(value, value)
+
+    def validate(self, attrs):
+        data_types = attrs.get('data_types') or []
+        filters = attrs.get('filters') or {}
+        export_type = attrs.get('export_type')
+
+        if not data_types and filters:
+            include_map = {
+                'include_subscriptions': 'subscriptions',
+                'include_usage': 'usage',
+                'include_costs': 'costs',
+                'include_recommendations': 'recommendations',
+                'include_users': 'users',
+                'include_alerts': 'alerts',
+                'include_audit_logs': 'audit_logs',
+            }
+            data_types = [
+                key for flag, key in include_map.items()
+                if filters.get(flag)
+            ]
+
+        if not data_types and export_type:
+            type_to_data = {
+                DataExport.ExportType.SUBSCRIPTIONS: ['subscriptions'],
+                DataExport.ExportType.USAGE: ['usage'],
+                DataExport.ExportType.COSTS: ['costs'],
+                DataExport.ExportType.RECOMMENDATIONS: ['recommendations'],
+                DataExport.ExportType.SAVINGS: ['costs', 'recommendations'],
+                DataExport.ExportType.FULL: [
+                    'subscriptions', 'usage', 'costs', 'users',
+                    'recommendations', 'alerts', 'audit_logs',
+                ],
+                DataExport.ExportType.CUSTOM: ['subscriptions'],
+            }
+            data_types = type_to_data.get(export_type, ['subscriptions'])
+
+        if not data_types:
+            data_types = ['subscriptions']
+
+        attrs['data_types'] = data_types
+        attrs['filters'] = filters
+        return attrs
 
 
 class ImportJobSerializer(serializers.ModelSerializer):

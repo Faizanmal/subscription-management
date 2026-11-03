@@ -140,9 +140,12 @@ class DataExport(models.Model):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='data_exports')
     requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='data_exports')
     
-    export_type = models.CharField(max_length=20, choices=ExportType.choices)
+    export_type = models.CharField(max_length=20, choices=ExportType.choices, default=ExportType.CUSTOM)
     format = models.CharField(max_length=10, choices=Format.choices, default=Format.CSV)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+
+    # Which datasets to include (subscriptions, usage, costs, …)
+    data_types = models.JSONField(default=list, blank=True)
     
     # Filters
     filters = models.JSONField(default=dict, blank=True)
@@ -154,6 +157,7 @@ class DataExport(models.Model):
     file_size = models.BigIntegerField(default=0)
     download_url = models.URLField(blank=True)
     download_expires_at = models.DateTimeField(blank=True, null=True)
+    download_count = models.PositiveIntegerField(default=0)
     
     # Progress
     progress = models.IntegerField(default=0)  # 0-100
@@ -166,6 +170,14 @@ class DataExport(models.Model):
     error_message = models.TextField(blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def expires_at(self):
+        return self.download_expires_at
+
+    @expires_at.setter
+    def expires_at(self, value):
+        self.download_expires_at = value
     
     class Meta:
         db_table = 'data_exports'

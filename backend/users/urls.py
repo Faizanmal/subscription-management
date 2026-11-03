@@ -8,10 +8,14 @@ from rest_framework_simplejwt.views import TokenRefreshView, TokenBlacklistView
 
 from users.views import (
     CustomTokenObtainPairView, RegisterView, RegisterWithOrganizationView,
-    AcceptInvitationView, MeView, ChangePasswordView,
+    AcceptInvitationView, MeView, ChangePasswordView, LogoutView,
     OrganizationViewSet, DepartmentViewSet, TeamViewSet,
     RoleViewSet, UserViewSet, UserInvitationViewSet,
     AuditLogViewSet, NotificationViewSet
+)
+from users.billing import (
+    BillingStatusView, CreateCheckoutSessionView,
+    CreateBillingPortalSessionView, StripeWebhookView,
 )
 
 router = DefaultRouter()
@@ -38,6 +42,12 @@ urlpatterns = [
     # Current user
     path('me/', MeView.as_view(), name='me'),
     path('me/password/', ChangePasswordView.as_view(), name='change_password'),
+    path('logout/', LogoutView.as_view(), name='logout'),
+
+    path('billing/', BillingStatusView.as_view(), name='billing-status'),
+    path('billing/checkout/', CreateCheckoutSessionView.as_view(), name='billing-checkout'),
+    path('billing/portal/', CreateBillingPortalSessionView.as_view(), name='billing-portal'),
+    path('billing/webhook/', StripeWebhookView.as_view(), name='billing-webhook'),
     
     # Router URLs
     path('', include(router.urls)),

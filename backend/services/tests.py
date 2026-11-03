@@ -118,6 +118,44 @@ class SubscriptionTestCase(TestCase):
         response = APIClient().post(url, data, format='json', follow=True)
         self.assertEqual(response.status_code, 401)
 
+    def test_dashboard_requires_auth(self):
+        response = APIClient().get(reverse('dashboard'))
+        self.assertEqual(response.status_code, 401)
+
+    def test_dashboard_returns_org_totals(self):
+        url = reverse('dashboard')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn('total_subscriptions', payload)
+        self.assertGreaterEqual(payload['total_subscriptions'], 1)
+
+    def test_create_subscription_accepts_frontend_payload(self):
+        url = reverse('subscription-list')
+        response = self.client.post(url, {
+            'name': 'Figma Professional',
+            'vendor_id': str(self.vendor.id),
+            'monthly_cost': 99,
+            'billing_cycle': 'monthly',
+            'total_licenses': 3,
+            'assigned_licenses': 2,
+            'status': 'active',
+            'start_date': '2026-08-19T12:00:00.000Z',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        created = Subscription.objects.get(name='Figma Professional')
+        self.assertEqual(created.vendor_id, self.vendor.id)
+        self.assertEqual(created.total_licenses, 3)
+        self.assertEqual(created.used_licenses, 2)
+        self.assertEqual(float(created.cost_per_unit), 33.0)
+
+    def test_vendor_search_includes_unverified(self):
+        url = reverse('vendor-search')
+        response = self.client.get(url, {'q': 'Test'})
+        self.assertEqual(response.status_code, 200)
+        names = [item['name'] for item in response.json()]
+        self.assertIn('Test Software', names)
+
 
 class RecommendationWorkflowIntegrationTestCase(TestCase):
     """Integration tests for recommendation and workflow orchestration"""
@@ -216,7 +254,11 @@ class AutomationWorkflowExecutionTestCase(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.org = Organization.objects.create(name='Automation Org', slug='automation-org')
+        self.org = Organization.objects.create(
+            name='Automation Org',
+            slug='automation-org',
+            plan=Organization.PlanType.PRO,
+        )
         self.role = Role.objects.create(
             organization=self.org,
             name='Admin',
@@ -245,10 +287,14 @@ class AutomationWorkflowExecutionTestCase(TestCase):
         self.headers = {}
 
     def test_manual_run_creates_execution(self):
-        url = reverse('workflow-run', args=[self.workflow.id])
-        response = self.client.post(url, {}, format='json', follow=True, **self.headers)
+        from unittest.mock import patch
 
-        self.assertEqual(response.status_code, 202)
+        url = reverse('workflow-run', args=[self.workflow.id])
+        with patch('services.tasks.execute_automation_workflow.delay') as delay:
+            response = self.client.post(url, {}, format='json', follow=True, **self.headers)
+            self.assertEqual(response.status_code, 202)
+            self.assertTrue(delay.called)
+
         self.assertTrue(
             WorkflowExecution.objects.filter(workflow=self.workflow).exists()
         )

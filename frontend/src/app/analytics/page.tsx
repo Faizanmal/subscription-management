@@ -104,7 +104,7 @@ export default function AnalyticsPage() {
           subscriptions: Number(dept.subscription_count || 0),
         }))
       );
-    } catch (err) {
+    } catch {
     } finally {
       setIsLoading(false);
     }

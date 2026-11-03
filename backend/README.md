@@ -17,6 +17,10 @@ This Django application provides the REST API for managing subscriptions, user a
 - Celery for background task processing
 - PostgreSQL database support
 
+## Docker
+
+From the repo root: `docker compose up --build`. See the [main README](../README.md) for ports and environment variables.
+
 ## Getting Started
 
 ### Prerequisites

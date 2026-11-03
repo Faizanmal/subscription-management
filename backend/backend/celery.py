@@ -12,54 +12,54 @@ app = Celery('swm')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
-# Celery beat schedule for periodic tasks
+# Beat schedule must use real @shared_task names (module.function).
 app.conf.beat_schedule = {
-    # Subscription discovery - runs every 6 hours
     'discover-subscriptions': {
-        'task': 'services.tasks.discover_subscriptions_task',
-        'schedule': crontab(hour='*/6'),
+        'task': 'services.tasks.discover_subscriptions',
+        'schedule': crontab(minute=0, hour='*/6'),
     },
-    # Usage tracking - runs every hour
-    'track-usage': {
-        'task': 'services.tasks.track_usage_task',
-        'schedule': crontab(minute=0),
+    'aggregate-usage-metrics': {
+        'task': 'services.tasks.aggregate_usage_metrics',
+        'schedule': crontab(minute=15),
     },
-    # Renewal alerts - runs daily at 9 AM
-    'send-renewal-alerts': {
-        'task': 'services.tasks.send_renewal_alerts_task',
-        'schedule': crontab(hour=9, minute=0),
+    'check-renewal-alerts': {
+        'task': 'services.tasks.check_renewal_alerts',
+        'schedule': crontab(minute=0, hour=9),
     },
-    # AI recommendations - runs daily at midnight
-    'generate-recommendations': {
-        'task': 'services.tasks.generate_recommendations_task',
-        'schedule': crontab(hour=0, minute=0),
+    'generate-ai-recommendations': {
+        'task': 'services.tasks.generate_ai_recommendations',
+        'schedule': crontab(minute=0, hour=0),
     },
-    # Redundancy detection - runs weekly
     'detect-redundancies': {
-        'task': 'services.tasks.detect_redundancies_task',
-        'schedule': crontab(day_of_week=0, hour=2, minute=0),
+        'task': 'services.tasks.detect_redundancies',
+        'schedule': crontab(minute=0, hour=2, day_of_week=0),
     },
-    # Cost analytics update - runs every 4 hours
-    'update-cost-analytics': {
-        'task': 'services.tasks.update_cost_analytics_task',
-        'schedule': crontab(hour='*/4'),
+    'generate-cost-report': {
+        'task': 'services.tasks.generate_cost_report',
+        'schedule': crontab(minute=0, hour='*/4'),
     },
-    # Cleanup old data - runs weekly
-    'cleanup-old-data': {
-        'task': 'services.tasks.cleanup_old_data_task',
-        'schedule': crontab(day_of_week=0, hour=3, minute=0),
+    'sync-all-integrations': {
+        'task': 'integrations.tasks.sync_all_integrations',
+        'schedule': crontab(minute=30, hour='*/2'),
     },
-    # Sync integrations - runs every 2 hours
-    'sync-integrations': {
-        'task': 'integrations.tasks.sync_all_integrations_task',
-        'schedule': crontab(hour='*/2'),
+    'run-scheduled-backups': {
+        'task': 'backups.tasks.run_scheduled_backups',
+        'schedule': crontab(minute=0, hour=2),
     },
-    # Backup database - runs daily at 2 AM
-    'backup-database': {
-        'task': 'backups.tasks.backup_database_task',
-        'schedule': crontab(hour=2, minute=0),
+    'cleanup-expired-invitations': {
+        'task': 'users.tasks.cleanup_expired_invitations',
+        'schedule': crontab(minute=0, hour=4),
+    },
+    'cleanup-old-notifications': {
+        'task': 'users.tasks.cleanup_old_notifications',
+        'schedule': crontab(minute=20, hour=4, day_of_week=0),
+    },
+    'cleanup-expired-sessions': {
+        'task': 'security.tasks.cleanup_expired_sessions',
+        'schedule': crontab(minute=40, hour=4),
     },
 }
+
 
 @app.task(bind=True, ignore_result=True)
 def debug_task(self):

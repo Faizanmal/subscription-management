@@ -6,6 +6,33 @@ import axios, { AxiosInstance, AxiosError, AxiosRequestConfig } from 'axios';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws';
 
+export function backendOrigin(): string {
+  return API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+}
+
+export function socialLoginUrl(provider: 'google' | 'microsoft'): string {
+  const backend = provider === 'google' ? 'google-oauth2' : 'microsoft-graph';
+  return `${backendOrigin()}/social/login/${backend}/`;
+}
+
+export function persistAuthTokens(access: string, refresh: string) {
+  if (typeof window === 'undefined') return;
+  let parsed: { state?: Record<string, unknown>; version?: number } = { state: {}, version: 0 };
+  try {
+    const raw = localStorage.getItem('swm-auth');
+    if (raw) parsed = JSON.parse(raw);
+  } catch {
+    parsed = { state: {}, version: 0 };
+  }
+  parsed.state = {
+    ...(parsed.state || {}),
+    accessToken: access,
+    refreshToken: refresh,
+    isAuthenticated: true,
+  };
+  localStorage.setItem('swm-auth', JSON.stringify(parsed));
+}
+
 // ==================== Axios Client Setup ====================
 
 export const apiClient: AxiosInstance = axios.create({
@@ -28,7 +55,7 @@ apiClient.interceptors.request.use(
           if (token) {
             config.headers.Authorization = `Bearer ${token}`;
           }
-        } catch (error) {
+        } catch {
         }
       }
     }
@@ -65,7 +92,7 @@ apiClient.interceptors.response.use(
           const refreshToken = parsed?.state?.refreshToken;
           
           if (refreshToken) {
-            const response = await axios.post(`${API_BASE_URL}/auth/refresh/`, {
+            const response = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, {
               refresh: refreshToken,
             });
 
@@ -86,7 +113,9 @@ apiClient.interceptors.response.use(
         // Refresh failed, redirect to login
         if (typeof window !== 'undefined') {
           localStorage.removeItem('swm-auth');
-          window.location.href = '/login';
+          // Interceptor is outside React; Next router is not available here.
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+          window.location.assign(`${window.location.origin}/login`);
         }
         return Promise.reject(refreshError);
       }

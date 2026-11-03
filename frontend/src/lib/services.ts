@@ -23,6 +23,7 @@ import type {
   Webhook,
   SSOConnection,
   SlackNotification,
+  EmailScanConfig,
   APIKey,
   MFADevice,
   Session,
@@ -40,6 +41,7 @@ import type {
   AuthTokens,
   LoginCredentials,
   RegisterData,
+  BillingStatus,
 } from '@/types/swm';
 
 // ==================== Auth API ====================
@@ -49,10 +51,17 @@ export const authApi = {
     api.post<AuthTokens>('/auth/token/', credentials),
 
   register: (data: RegisterData) =>
-    api.post<{ user: User; tokens: AuthTokens }>('/auth/register/', data),
+    api.post<{ user: User; tokens: AuthTokens }>('/auth/register/organization/', {
+      email: data.email,
+      password: data.password,
+      password_confirm: data.password_confirm,
+      first_name: data.first_name,
+      last_name: data.last_name,
+      organization_name: data.organization_name,
+    }),
 
-  logout: () =>
-    api.post('/auth/logout/'),
+  logout: (refresh?: string | null) =>
+    api.post('/auth/logout/', refresh ? { refresh } : {}),
 
   refreshToken: (refresh: string) =>
     api.post<{ access: string }>('/auth/token/refresh/', { refresh }),
@@ -63,24 +72,47 @@ export const authApi = {
   updateProfile: (data: Partial<User>) =>
     api.patch<User>('/auth/me/', data),
 
-  changePassword: (data: { old_password: string; new_password: string; new_password2: string }) =>
+  changePassword: (data: {
+    current_password: string;
+    new_password: string;
+    new_password_confirm: string;
+  }) =>
     api.post('/auth/me/password/', data),
 
   updateNotificationSettings: (settings: Record<string, unknown>) =>
-    api.patch('/users/me/notification-settings/', settings),
+    api.patch<User>('/auth/me/', { notification_preferences: settings }),
 
   requestPasswordReset: (email: string) =>
-    api.post('/security/password-reset/', { email }),
+    api.post('/security/password/reset/', { email }),
 
   confirmPasswordReset: (token: string, password: string, password2: string) =>
-    api.post('/security/password-reset/confirm/', { token, new_password: password, new_password2: password2 }),
+    api.post('/security/password/reset/confirm/', {
+      token,
+      new_password: password,
+      confirm_password: password2,
+    }),
+
+  acceptInvitation: (data: {
+    token: string;
+    password: string;
+    password_confirm: string;
+    first_name: string;
+    last_name: string;
+  }) =>
+    api.post<{ user: User; tokens: AuthTokens }>('/auth/invite/accept/', data),
 
   googleLogin: () =>
-    api.get<{ auth_url: string }>('/integrations/oauth/google/'),
+    api.get<{ auth_url: string }>('/integrations/google/setup/'),
 
   microsoftLogin: () =>
-    api.get<{ auth_url: string }>('/integrations/oauth/microsoft/'),
+    api.get<{ auth_url: string }>('/integrations/microsoft/setup/'),
 };
+
+function unwrapList<T>(data: T[] | PaginatedResponse<T> | undefined): T[] {
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  return data.results || [];
+}
 
 // ==================== Organization API ====================
 
@@ -89,10 +121,10 @@ export const organizationApi = {
     api.get<Organization>('/auth/organizations/current/'),
 
   update: (data: Partial<Organization>) =>
-    api.patch<Organization>('/auth/organizations/', data),
+    api.patch<Organization>('/auth/organizations/current/', data),
 
   updateSettings: (settings: Partial<Organization['settings']>) =>
-    api.patch<Organization>('/auth/organizations/', { settings }),
+    api.patch<Organization>('/auth/organizations/current/', { settings }),
 
   getMembers: () =>
     api.get<User[]>('/auth/users/'),
@@ -112,12 +144,88 @@ export const organizationApi = {
   sendInvitation: (data: { email: string; role: string }) =>
     api.post<Invitation>('/auth/invitations/', data),
 
+  getBilling: () =>
+    api.get<BillingStatus>('/auth/billing/'),
+
+  createCheckoutSession: (plan: string) =>
+    api.post<{ checkout_url: string }>('/auth/billing/checkout/', { plan }),
+
+  createBillingPortal: () =>
+    api.post<{ portal_url: string }>('/auth/billing/portal/'),
+
   resendInvitation: (id: string) =>
     api.post<Invitation>(`/auth/invitations/${id}/resend/`),
 
   revokeInvitation: (id: string) =>
     api.post(`/auth/invitations/${id}/cancel/`),
 };
+
+function toDateOnly(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  return value.includes('T') ? value.split('T')[0] : value;
+}
+
+function mapBillingCycle(cycle?: string): string | undefined {
+  if (!cycle) return undefined;
+  if (cycle === 'one_time' || cycle === 'usage_based') return 'custom';
+  return cycle;
+}
+
+function toSubscriptionWritePayload(data: Partial<Subscription> & Record<string, unknown>) {
+  const licenses = Math.max(1, Number(data.total_licenses || 1));
+  const cycleTotal =
+    data.monthly_cost != null
+      ? Number(data.monthly_cost)
+      : Number(data.cost_per_unit || 0) * licenses;
+  const vendorId =
+    data.vendor_id ||
+    (typeof data.vendor === 'string' ? data.vendor : data.vendor?.id);
+  const ownerId =
+    data.owner_id || (typeof data.owner === 'string' ? data.owner : data.owner?.id);
+
+  return {
+    name: data.name,
+    description: data.description,
+    vendor: vendorId || null,
+    custom_category: data.custom_category,
+    status: data.status,
+    owner: ownerId || null,
+    cost_per_unit: Number((cycleTotal / licenses).toFixed(2)),
+    currency: data.currency,
+    billing_cycle: mapBillingCycle(data.billing_cycle),
+    total_licenses: Number(data.total_licenses || 1),
+    used_licenses: Number(data.assigned_licenses ?? data.used_licenses ?? 0),
+    start_date: toDateOnly(data.start_date),
+    end_date: toDateOnly(data.end_date || data.contract_end_date),
+    renewal_date: toDateOnly(data.renewal_date),
+    auto_renew: data.auto_renew,
+    notes: data.notes,
+    tags: data.tags,
+    login_url: data.login_url,
+  };
+}
+
+function normalizeSubscription(raw: Record<string, unknown>): Subscription {
+  const used = Number(raw.used_licenses ?? raw.assigned_licenses ?? 0);
+  const vendor = raw.vendor;
+  const vendorId =
+    (raw.vendor_id as string | undefined) ||
+    (typeof vendor === 'string' ? vendor : (vendor as Vendor | undefined)?.id);
+  const owner = raw.owner;
+  const ownerId =
+    (raw.owner_id as string | undefined) ||
+    (typeof owner === 'string' ? owner : (owner as User | undefined)?.id);
+  return {
+    ...(raw as unknown as Subscription),
+    vendor_id: vendorId,
+    owner_id: ownerId,
+    assigned_licenses: used,
+    used_licenses: used,
+    monthly_cost: Number(raw.monthly_cost ?? 0),
+    annual_cost: Number(raw.annual_cost ?? 0),
+    cost_per_unit: Number(raw.cost_per_unit ?? 0),
+  };
+}
 
 // ==================== Subscriptions API ====================
 
@@ -131,16 +239,27 @@ export const subscriptionsApi = {
     ordering?: string;
     page?: number;
   }) =>
-    api.get<PaginatedResponse<Subscription>>('/subscriptions/', { params }),
+    api.get<PaginatedResponse<Subscription>>('/subscriptions/', { params }).then((data) => ({
+      ...data,
+      results: unwrapList(data).map((item) =>
+        normalizeSubscription(item as unknown as Record<string, unknown>)
+      ),
+    })),
 
   get: (id: string) =>
-    api.get<Subscription>(`/subscriptions/${id}/`),
+    api.get<Subscription>(`/subscriptions/${id}/`).then((data) =>
+      normalizeSubscription(data as unknown as Record<string, unknown>)
+    ),
 
   create: (data: Partial<Subscription>) =>
-    api.post<Subscription>('/subscriptions/', data),
+    api
+      .post<Subscription>('/subscriptions/', toSubscriptionWritePayload(data))
+      .then((created) => normalizeSubscription(created as unknown as Record<string, unknown>)),
 
   update: (id: string, data: Partial<Subscription>) =>
-    api.patch<Subscription>(`/subscriptions/${id}/`, data),
+    api
+      .patch<Subscription>(`/subscriptions/${id}/`, toSubscriptionWritePayload(data))
+      .then((updated) => normalizeSubscription(updated as unknown as Record<string, unknown>)),
 
   delete: (id: string) =>
     api.delete(`/subscriptions/${id}/`),
@@ -365,7 +484,7 @@ export const alertsApi = {
 
 export const integrationsApi = {
   list: () =>
-    api.get<Integration[]>('/integrations/'),
+    api.get<Integration[] | PaginatedResponse<Integration>>('/integrations/').then(unwrapList),
 
   get: (id: string) =>
     api.get<Integration>(`/integrations/${id}/`),
@@ -380,29 +499,66 @@ export const integrationsApi = {
     api.delete(`/integrations/${id}/`),
 
   sync: (id: string) =>
-    api.post<{ task_id: string }>(`/integrations/${id}/sync/`),
+    api.post<{ sync_id: string }>(`/integrations/${id}/sync/`),
 
   test: (id: string) =>
-    api.post<{ success: boolean; message: string }>(`/integrations/${id}/test/`),
+    api.post<{ message: string; task_id: string }>(`/integrations/${id}/test/`).then((data) => ({
+      success: true,
+      message: data.message,
+    })),
+
+  getGoogleAuthUrl: () =>
+    api.get<{ auth_url: string }>('/integrations/google/setup/'),
+
+  completeGoogleOAuth: (code: string, state: string) =>
+    api.post<{ message: string; integration_id: string }>('/integrations/google/callback/', { code, state }),
+
+  getMicrosoftAuthUrl: () =>
+    api.get<{ auth_url: string }>('/integrations/microsoft/setup/'),
+
+  completeMicrosoftOAuth: (code: string, state: string) =>
+    api.post<{ message: string; integration_id: string }>('/integrations/microsoft/callback/', { code, state }),
+
+  getProviderAuthUrl: (provider: string) =>
+    api.get<{ auth_url: string }>(`/integrations/${provider}/setup/`),
+
+  completeProviderOAuth: (provider: string, code: string, state: string) =>
+    api.post<{ message: string; integration_id: string }>(`/integrations/${provider}/callback/`, { code, state }),
 
   // Bank Accounts (Plaid)
   getBankAccounts: () =>
-    api.get<BankAccount[]>('/integrations/bank-accounts/'),
+    api.get<BankAccount[] | PaginatedResponse<BankAccount>>('/integrations/bank-accounts/').then(unwrapList),
 
   listBankAccounts: () =>
     api.get<PaginatedResponse<BankAccount>>('/integrations/bank-accounts/'),
 
   createPlaidLink: () =>
-    api.post<{ link_token: string }>('/integrations/bank-accounts/create_link_token/'),
+    api.post<{ link_token: string }>('/integrations/bank-accounts/plaid_link_token/'),
 
   exchangePlaidToken: (publicToken: string) =>
-    api.post<BankAccount[]>('/integrations/bank-accounts/exchange_token/', { public_token: publicToken }),
+    api.post<{ message: string; integration_id: string }>(
+      '/integrations/bank-accounts/plaid_exchange_token/',
+      { public_token: publicToken },
+    ),
 
   syncBankAccount: (id: string) =>
     api.post(`/integrations/bank-accounts/${id}/sync/`),
 
   deleteBankAccount: (id: string) =>
     api.delete(`/integrations/bank-accounts/${id}/`),
+
+  // Email scan
+  listEmailScans: () =>
+    api.get<EmailScanConfig[] | PaginatedResponse<EmailScanConfig>>('/integrations/email-scan/').then(unwrapList),
+
+  createEmailScan: (data: Partial<EmailScanConfig>) =>
+    api.post<EmailScanConfig>('/integrations/email-scan/', data),
+
+  updateEmailScan: (id: string, data: Partial<EmailScanConfig>) =>
+    api.patch<EmailScanConfig>(`/integrations/email-scan/${id}/`, data),
+
+  scanEmailsNow: (id: string) =>
+    api.post<{ message: string; task_id: string }>(`/integrations/email-scan/${id}/scan_now/`),
 
   // Transactions
   getTransactions: (params?: {
@@ -465,8 +621,17 @@ export const integrationsApi = {
   testSlackNotification: (id: string) =>
     api.post<{ success: boolean }>(`/integrations/slack/${id}/test/`),
 
-  connectSlack: (workspaceId: string) =>
-    api.post('/integrations/slack/connect/', { workspace_id: workspaceId }),
+  connectSlack: (data: { webhook_url: string; channel_name: string }) =>
+    api.post<{ message: string; integration_id: string }>('/integrations/slack/connect/', data),
+
+  connectTeams: (data: { webhook_url: string; channel_name: string }) =>
+    api.post<{ message: string; integration_id: string }>('/integrations/teams/connect/', data),
+
+  connectOkta: (data: { domain: string; api_token: string }) =>
+    api.post<{ message: string; integration_id: string }>('/integrations/okta/connect/', data),
+
+  connectAzureAd: (data: { tenant_id: string; client_id: string; client_secret: string }) =>
+    api.post<{ message: string; integration_id: string }>('/integrations/azure-ad/connect/', data),
 };
 
 // ==================== Security API ====================
@@ -482,8 +647,12 @@ export const securityApi = {
   createAPIKey: (data: { name: string; scopes: string[]; expires_at?: string }) =>
     api.post<APIKey & { key: string }>('/security/api-keys/', data),
 
-  createApiKey: (data: { name: string; scopes: string[]; expires_at?: string }) =>
-    api.post<APIKey & { key: string; secret: string }>('/security/api-keys/', data),
+  createApiKey: (data: { name: string; scopes?: string[]; scope?: string; expires_at?: string }) =>
+    api.post<APIKey & { key: string; secret?: string }>('/security/api-keys/', {
+      name: data.name,
+      scope: data.scope || data.scopes?.[0] || 'read',
+      expires_at: data.expires_at,
+    }),
 
   revokeAPIKey: (id: string) =>
     api.post(`/security/api-keys/${id}/revoke/`),
@@ -502,22 +671,33 @@ export const securityApi = {
     api.get<PaginatedResponse<MFADevice>>('/security/mfa/'),
 
   setupTOTP: () =>
-    api.post<{ secret: string; qr_code: string; backup_codes: string[] }>('/security/mfa/setup_totp/'),
+    api.post<{ device_id: string; secret?: string; qr_code?: string }>('/security/mfa/setup/', {
+      type: 'totp',
+    }),
 
   setupMFA: (type: string) =>
-    api.post<{ secret: string; qr_code: string; backup_codes: string[] }>(`/security/mfa/setup_${type}/`),
+    api.post<{ device_id: string; secret?: string; qr_code?: string; message?: string }>(
+      '/security/mfa/setup/',
+      { type },
+    ),
+
+  verifyMFA: (deviceId: string, code: string) =>
+    api.post<{ message: string; is_primary: boolean }>(`/security/mfa/${deviceId}/verify/`, { code }),
 
   verifyTOTP: (code: string) =>
     api.post<{ success: boolean }>('/security/mfa/verify/', { type: 'totp', code }),
 
   setupSMS: (phone: string) =>
-    api.post<{ success: boolean }>('/security/mfa/setup_sms/', { phone }),
+    api.post<{ device_id: string; message?: string }>('/security/mfa/setup/', {
+      type: 'sms',
+      phone_number: phone,
+    }),
 
   verifySMS: (code: string) =>
     api.post<{ success: boolean }>('/security/mfa/verify/', { type: 'sms', code }),
 
   setupEmail: () =>
-    api.post<{ success: boolean }>('/security/mfa/setup_email/'),
+    api.post<{ device_id: string; message?: string }>('/security/mfa/setup/', { type: 'email' }),
 
   verifyEmail: (code: string) =>
     api.post<{ success: boolean }>('/security/mfa/verify/', { type: 'email', code }),
@@ -613,14 +793,21 @@ export const backupsApi = {
     api.get<DataExport[]>('/backups/exports/'),
 
   createExport: (data: {
-    export_type: string;
     format: string;
+    export_type?: string;
+    data_types?: string[];
     filters?: Record<string, unknown>;
+    date_from?: string;
+    date_to?: string;
   }) =>
     api.post<DataExport>('/backups/exports/', data),
 
-  downloadExport: (id: string) =>
-    api.get<{ download_url: string }>(`/backups/exports/${id}/download/`),
+  downloadExport: async (id: string) => {
+    const response = await api.client.get(`/backups/exports/${id}/download/`, {
+      responseType: 'blob',
+    });
+    return response.data as Blob;
+  },
 
   // Imports
   getImports: () =>
@@ -670,11 +857,19 @@ export const backupsApi = {
 // ==================== Notifications API ====================
 
 export const notificationsApi = {
-  list: (params?: { unread_only?: boolean }) =>
-    api.get<Notification[]>('/auth/notifications/', { params }),
+  list: async (params?: { unread_only?: boolean; is_read?: boolean }) => {
+    const data = await api.get<Notification[] | PaginatedResponse<Notification>>(
+      '/auth/notifications/',
+      { params },
+    );
+    if (Array.isArray(data)) {
+      return data;
+    }
+    return data.results || [];
+  },
 
   markAsRead: (id: string) =>
-    api.post(`/auth/notifications/${id}/read/`),
+    api.post(`/auth/notifications/${id}/mark_read/`),
 
   markAllAsRead: () =>
     api.post('/auth/notifications/mark_all_read/'),
@@ -693,39 +888,25 @@ export const dashboardApi = {
     api.get<DashboardStats>('/dashboard/'),
 
   getTrends: (params?: { period?: 'week' | 'month' | 'quarter' | 'year' }) =>
-    api.get<DashboardTrend[]>('/analytics/trend/', { params }).then((data) =>
-<<<<<<< HEAD
-      Array.isArray(data) ? data.map((item: any) => ({
-        period: item.period,
-        date: item.date,
-        cost: Number(item.spend ?? item.cost ?? 0),
-        amount: Number(item.spend ?? item.amount ?? 0),
-        subscription_count: Number(item.subscription_count ?? 0),
-      })) : []
-=======
-      Array.isArray(data) ? data.map((item: unknown) => {
+    api.get<{ trend?: Array<Partial<DashboardTrend> & Record<string, unknown>> } | DashboardTrend[]>(
+      '/analytics/trend/',
+      { params: { months: params?.period === 'year' ? 12 : params?.period === 'quarter' ? 3 : 6 } }
+    ).then((data) => {
+      const rows = Array.isArray(data) ? data : data?.trend || [];
+      return rows.map((item) => {
         const trend = item as Partial<DashboardTrend> & Record<string, unknown>;
         return {
-          period: trend.period,
-          date: trend.date,
+          period: String(trend.period ?? ''),
+          date: String(trend.date ?? trend.period ?? ''),
           cost: Number((trend.spend as number | undefined) ?? trend.cost ?? 0),
           amount: Number((trend.spend as number | undefined) ?? trend.amount ?? 0),
           subscription_count: Number(trend.subscription_count ?? 0),
         };
-      }) : []
->>>>>>> f2225d53a335250fd763dea989142daf386167f6
-    ),
+      });
+    }),
 
   getCategoryBreakdown: () =>
     api.get<{ by_category: CategoryBreakdown[] }>('/analytics/spend/').then((data) =>
-<<<<<<< HEAD
-      (data?.by_category || []).map((item: any) => ({
-        category: item.category,
-        count: Number(item.subscription_count ?? item.count ?? 0),
-        cost: Number(item.spend ?? item.cost ?? 0),
-        avg_utilization: Number(item.avg_utilization ?? 0),
-      }))
-=======
       (data?.by_category || []).map((item: unknown): CategoryBreakdown => {
         const category = item as Partial<CategoryBreakdown> & Record<string, unknown>;
         return {
@@ -735,7 +916,6 @@ export const dashboardApi = {
           avg_utilization: Number(category.avg_utilization ?? 0),
         };
       })
->>>>>>> f2225d53a335250fd763dea989142daf386167f6
     ),
 
   getTopSpend: (limit?: number) =>
@@ -744,19 +924,17 @@ export const dashboardApi = {
     ),
 
   getLowUtilization: (threshold?: number, limit?: number) =>
-    api.get<PaginatedResponse<Subscription>>('/subscriptions/', {
-      params: {
-        status: 'active',
-        ordering: 'utilization_rate',
-        page_size: limit,
-      },
+    api.get<Subscription[] | PaginatedResponse<Subscription>>('/subscriptions/low_utilization/', {
+      params: { threshold: threshold || 30, limit },
     }).then((data) =>
-      (data?.results || []).filter((s) => Number(s.utilization_rate || 0) <= (threshold || 30))
+      unwrapList(data).map((item) => normalizeSubscription(item as unknown as Record<string, unknown>))
     ),
 
   getUpcomingRenewals: (days?: number) =>
-    api.get<PaginatedResponse<RenewalAlert>>('/alerts/', { params: { alert_type: 'renewal', days } }).then((data) =>
-      (data?.results || []).map((alert) => alert.subscription).filter(Boolean) as Subscription[]
+    api.get<Subscription[] | PaginatedResponse<Subscription>>('/subscriptions/upcoming_renewals/', {
+      params: { days: days || 30 },
+    }).then((data) =>
+      unwrapList(data).map((item) => normalizeSubscription(item as unknown as Record<string, unknown>))
     ),
 
   getOptimizationReport: () =>

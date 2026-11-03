@@ -40,7 +40,7 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 
 export default function DashboardPage() {
   const { user, isAuthenticated, fetchUser } = useAuthStore();
-  const { fetchOrganization } = useOrganizationStore();
+  const { organization, fetchOrganization } = useOrganizationStore();
   const {
     stats,
     trends,
@@ -100,6 +100,22 @@ export default function DashboardPage() {
             Refresh
           </Button>
         </div>
+
+        {!(organization?.settings as { onboarding_completed?: boolean } | undefined)?.onboarding_completed && (
+          <Card className="border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 dark:border-blue-900">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Finish setup for faster savings</CardTitle>
+              <CardDescription>
+                Connect Google Workspace or Microsoft 365, or add your first subscription manually.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild size="sm">
+                <Link href="/onboarding">Continue onboarding</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

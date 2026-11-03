@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/stores';
+import { organizationApi } from '@/lib/services';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,9 +13,13 @@ import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Eye, EyeOff, UserPlus, Mail, Building2, Loader2, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { socialLoginUrl } from '@/lib/api-base';
+import { hardNavigate } from '@/lib/navigation';
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedPlan = (searchParams.get('plan') || '').toLowerCase();
   const { register } = useAuthStore();
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -62,13 +67,22 @@ export default function RegisterPage() {
       await register({
         email: form.email,
         password: form.password,
-        password2: form.password,
+        password_confirm: form.confirm_password,
         first_name: form.first_name,
         last_name: form.last_name,
         organization_name: form.company_name,
       });
       toast.success('Account created successfully!');
-      router.push('/dashboard');
+      if (requestedPlan === 'pro') {
+        try {
+          const { checkout_url } = await organizationApi.createCheckoutSession('pro');
+          hardNavigate(checkout_url);
+          return;
+        } catch {
+          toast.info('Continue onboarding, then upgrade from Billing when ready.');
+        }
+      }
+      router.push('/onboarding');
     } catch (error: unknown) {
       const err = error as { message?: string };
       toast.error(err.message || 'Failed to create account');
@@ -78,8 +92,7 @@ export default function RegisterPage() {
   };
 
   const handleSocialLogin = (provider: 'google' | 'microsoft') => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-    window.location.href = `${baseUrl}/users/auth/social/${provider}/`;
+    window.location.href = socialLoginUrl(provider);
   };
 
   return (
@@ -98,7 +111,9 @@ export default function RegisterPage() {
           <CardHeader>
             <CardTitle>Create your account</CardTitle>
             <CardDescription>
-              Free 14-day trial. No credit card required.
+              {requestedPlan === 'pro'
+                ? 'Create your account, then continue to Pro checkout.'
+                : 'Free 14-day trial. No credit card required.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -346,5 +361,19 @@ export default function RegisterPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center text-gray-500">
+          Loading...
+        </div>
+      }
+    >
+      <RegisterForm />
+    </Suspense>
   );
 }

@@ -196,21 +196,42 @@ class DataExportViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = DataExportCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        # Build filters from request
-        filters = {}
-        if serializer.validated_data.get('date_from'):
-            filters['date_from'] = str(serializer.validated_data['date_from'])
-        if serializer.validated_data.get('date_to'):
-            filters['date_to'] = str(serializer.validated_data['date_to'])
+        data = serializer.validated_data
+        data_types = data.get('data_types') or ['subscriptions']
+
+        filters = dict(data.get('filters') or {})
+        if data.get('date_from'):
+            filters['date_from'] = str(data['date_from'])
+        if data.get('date_to'):
+            filters['date_to'] = str(data['date_to'])
+
+        type_map = {
+            'subscriptions': DataExport.ExportType.SUBSCRIPTIONS,
+            'usage': DataExport.ExportType.USAGE,
+            'costs': DataExport.ExportType.COSTS,
+            'recommendations': DataExport.ExportType.RECOMMENDATIONS,
+        }
+        if data.get('export_type'):
+            export_type = data['export_type']
+        elif len(data_types) == 1:
+            export_type = type_map.get(data_types[0], DataExport.ExportType.CUSTOM)
+        elif set(data_types) >= {
+            'subscriptions', 'usage', 'costs', 'users', 'recommendations', 'alerts', 'audit_logs'
+        }:
+            export_type = DataExport.ExportType.FULL
+        else:
+            export_type = DataExport.ExportType.CUSTOM
         
         export = DataExport.objects.create(
             organization=request.user.organization,
             requested_by=request.user,
-            format=serializer.validated_data['format'],
-            data_types=serializer.validated_data.get('data_types', []),
+            export_type=export_type,
+            format=data['format'],
+            data_types=data_types,
             filters=filters,
-            status='pending'
+            date_from=data.get('date_from'),
+            date_to=data.get('date_to'),
+            status=DataExport.Status.PENDING,
         )
         
         # Trigger async export task
@@ -225,13 +246,13 @@ class DataExportViewSet(viewsets.ModelViewSet):
         """Download export file"""
         export = self.get_object()
         
-        if export.status != 'completed':
+        if export.status != DataExport.Status.COMPLETED:
             return Response(
                 {'error': 'Export is not complete'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if export.expires_at and export.expires_at < timezone.now():
+        if export.download_expires_at and export.download_expires_at < timezone.now():
             return Response(
                 {'error': 'Export has expired'},
                 status=status.HTTP_410_GONE
@@ -245,7 +266,7 @@ class DataExportViewSet(viewsets.ModelViewSet):
         
         # Update download count
         export.download_count += 1
-        export.save()
+        export.save(update_fields=['download_count'])
         
         # Log the download
         from security.models import DataAccessLog
@@ -263,8 +284,8 @@ class DataExportViewSet(viewsets.ModelViewSet):
         content_types = {
             'csv': 'text/csv',
             'json': 'application/json',
-            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'pdf': 'application/pdf'
+            'excel': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'pdf': 'application/pdf',
         }
         content_type = content_types.get(export.format, 'application/octet-stream')
         

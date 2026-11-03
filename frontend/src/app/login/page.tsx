@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Eye, EyeOff, LogIn, Mail, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { socialLoginUrl } from '@/lib/api-base';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -47,8 +48,7 @@ export default function LoginPage() {
   };
 
   const handleSocialLogin = (provider: 'google' | 'microsoft') => {
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-    window.location.href = `${baseUrl}/users/auth/social/${provider}/`;
+    window.location.href = socialLoginUrl(provider);
   };
 
   return (

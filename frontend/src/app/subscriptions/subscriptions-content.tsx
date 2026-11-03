@@ -92,8 +92,10 @@ const STATUS_OPTIONS: { value: SubscriptionStatus; label: string; color: string 
 export default function SubscriptionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const urlSearch = searchParams.get('search') || '';
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(urlSearch);
+  const [appliedUrlSearch, setAppliedUrlSearch] = useState(urlSearch);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const {
@@ -108,19 +110,25 @@ export default function SubscriptionsContent() {
     clearFilters,
   } = useSubscriptionsStore();
 
+  if (urlSearch !== appliedUrlSearch) {
+    setAppliedUrlSearch(urlSearch);
+    setSearchQuery(urlSearch);
+  }
+
   useEffect(() => {
     const status = searchParams.get('status') || undefined;
     const category = searchParams.get('category') || undefined;
+    const search = searchParams.get('search') || undefined;
     const filter = searchParams.get('filter');
 
     if (filter === 'low-utilization') {
-      setFilters({ ...filters, status: 'active' });
+      setFilters({ status: 'active', category, search });
     } else {
-      setFilters({ status, category });
+      setFilters({ status, category, search });
     }
 
     fetchSubscriptions();
-  }, [searchParams, fetchSubscriptions, filters, setFilters]);
+  }, [searchParams, fetchSubscriptions, setFilters]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,6 +196,7 @@ export default function SubscriptionsContent() {
       cancelled: 'secondary',
       suspended: 'destructive',
       pending: 'outline',
+      inactive: 'secondary',
     };
     return (
       <Badge variant={variants[status]} className="capitalize">
@@ -213,7 +222,7 @@ export default function SubscriptionsContent() {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" asChild>
-              <Link href="/subscriptions/import">
+              <Link href="/settings/backups">
                 <Download className="h-4 w-4 mr-2" />
                 Import
               </Link>

@@ -1,13 +1,7 @@
 'use client';
 
-<<<<<<< HEAD
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-// Note: Meeting/calendar/activity APIs were moved to services.ts
-// This hook is for legacy compatibility - consider migrating to services.ts
-=======
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-base';
->>>>>>> f2225d53a335250fd763dea989142daf386167f6
 
 export interface Tag {
   id: string;

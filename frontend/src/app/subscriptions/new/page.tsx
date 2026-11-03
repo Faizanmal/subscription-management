@@ -48,9 +48,9 @@ const CATEGORIES: { value: VendorCategory; label: string }[] = [
 const BILLING_CYCLES: { value: BillingCycle; label: string }[] = [
   { value: 'monthly', label: 'Monthly' },
   { value: 'quarterly', label: 'Quarterly' },
+  { value: 'semi_annual', label: 'Semi-Annual' },
   { value: 'annual', label: 'Annual' },
-  { value: 'one_time', label: 'One Time' },
-  { value: 'usage_based', label: 'Usage Based' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
@@ -116,16 +116,18 @@ export default function NewSubscriptionPage() {
   };
 
   const calculateAnnualCost = () => {
-    const monthly = formData.monthly_cost || 0;
+    const amount = formData.monthly_cost || 0;
     switch (formData.billing_cycle) {
       case 'monthly':
-        return monthly * 12;
+        return amount * 12;
       case 'quarterly':
-        return monthly * 4;
+        return amount * 4;
+      case 'semi_annual':
+        return amount * 2;
       case 'annual':
-        return monthly;
+        return amount;
       default:
-        return monthly * 12;
+        return amount * 12;
     }
   };
 
@@ -152,7 +154,7 @@ export default function NewSubscriptionPage() {
       });
       toast.success('Subscription created successfully');
       router.push(`/subscriptions/${subscription.id}`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to create subscription');
     } finally {
       setIsSubmitting(false);
@@ -277,7 +279,16 @@ export default function NewSubscriptionPage() {
                 {/* Cost */}
                 <div className="space-y-2">
                   <Label htmlFor="cost">
-                    {formData.billing_cycle === 'annual' ? 'Annual' : 'Monthly'} Cost *
+                    {
+                      formData.billing_cycle === 'annual'
+                        ? 'Annual'
+                        : formData.billing_cycle === 'quarterly'
+                          ? 'Quarterly'
+                          : formData.billing_cycle === 'semi_annual'
+                            ? 'Semi-annual'
+                            : 'Monthly'
+                    }{' '}
+                    Cost *
                   </Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">

@@ -44,8 +44,9 @@ const STATUSES: { value: SubscriptionStatus; label: string }[] = [
   { value: 'active', label: 'Active' },
   { value: 'trial', label: 'Trial' },
   { value: 'pending', label: 'Pending' },
+  { value: 'inactive', label: 'Inactive' },
   { value: 'cancelled', label: 'Cancelled' },
-  { value: 'expired', label: 'Expired' },
+  { value: 'suspended', label: 'Suspended' },
 ];
 
 const CATEGORIES: { value: VendorCategory; label: string }[] = [
@@ -68,9 +69,9 @@ const CATEGORIES: { value: VendorCategory; label: string }[] = [
 const BILLING_CYCLES: { value: BillingCycle; label: string }[] = [
   { value: 'monthly', label: 'Monthly' },
   { value: 'quarterly', label: 'Quarterly' },
+  { value: 'semi_annual', label: 'Semi-Annual' },
   { value: 'annual', label: 'Annual' },
-  { value: 'one_time', label: 'One Time' },
-  { value: 'usage_based', label: 'Usage Based' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
@@ -106,7 +107,25 @@ export default function EditSubscriptionPage() {
   useEffect(() => {
     if (currentSubscription) {
       const timer = window.setTimeout(() => {
-        setFormData(currentSubscription);
+        setFormData({
+          ...currentSubscription,
+          monthly_cost:
+            Number(currentSubscription.cost_per_unit || 0) *
+              Number(currentSubscription.total_licenses || 1) ||
+            Number(currentSubscription.monthly_cost || 0),
+          assigned_licenses:
+            currentSubscription.used_licenses ?? currentSubscription.assigned_licenses ?? 0,
+          vendor_id:
+            currentSubscription.vendor_id ||
+            (typeof currentSubscription.vendor === 'string'
+              ? currentSubscription.vendor
+              : currentSubscription.vendor?.id),
+          owner_id:
+            currentSubscription.owner_id ||
+            (typeof currentSubscription.owner === 'string'
+              ? currentSubscription.owner
+              : currentSubscription.owner?.id),
+        });
         setVendorSearch(currentSubscription.vendor?.name || currentSubscription.name);
         if (currentSubscription.vendor) {
           setSelectedVendor(currentSubscription.vendor);
@@ -146,16 +165,18 @@ export default function EditSubscriptionPage() {
   };
 
   const calculateAnnualCost = () => {
-    const monthly = formData.monthly_cost || 0;
+    const amount = formData.monthly_cost || 0;
     switch (formData.billing_cycle) {
       case 'monthly':
-        return monthly * 12;
+        return amount * 12;
       case 'quarterly':
-        return monthly * 4;
+        return amount * 4;
+      case 'semi_annual':
+        return amount * 2;
       case 'annual':
-        return monthly;
+        return amount;
       default:
-        return monthly * 12;
+        return amount * 12;
     }
   };
 
@@ -181,7 +202,7 @@ export default function EditSubscriptionPage() {
       });
       toast.success('Subscription updated successfully');
       router.push(`/subscriptions/${subscriptionId}`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to update subscription');
     } finally {
       setIsSubmitting(false);
@@ -194,7 +215,7 @@ export default function EditSubscriptionPage() {
       await deleteSubscription(subscriptionId);
       toast.success('Subscription deleted');
       router.push('/subscriptions');
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete subscription');
     } finally {
       setIsDeleting(false);
@@ -380,7 +401,16 @@ export default function EditSubscriptionPage() {
                 {/* Cost */}
                 <div className="space-y-2">
                   <Label htmlFor="cost">
-                    {formData.billing_cycle === 'annual' ? 'Annual' : 'Monthly'} Cost *
+                    {
+                      formData.billing_cycle === 'annual'
+                        ? 'Annual'
+                        : formData.billing_cycle === 'quarterly'
+                          ? 'Quarterly'
+                          : formData.billing_cycle === 'semi_annual'
+                            ? 'Semi-annual'
+                            : 'Monthly'
+                    }{' '}
+                    Cost *
                   </Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">

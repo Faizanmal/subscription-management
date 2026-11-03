@@ -1,0 +1,4 @@
+#!/bin/sh
+# Scan JS configs after pull/merge so Next is not the first process to load them.
+root=$(git rev-parse --show-toplevel) || exit 1
+exec node "$root/frontend/scripts/guard-js-configs.mjs"

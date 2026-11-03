@@ -26,6 +26,22 @@ from security.serializers import (
 from api.permissions import IsAdmin
 
 
+def _log_data_access(request, access_type, resource_type, resource_id, details=None):
+    organization = getattr(request.user, 'organization', None)
+    if not organization:
+        return
+    DataAccessLog.objects.create(
+        organization=organization,
+        user=request.user,
+        access_type=access_type,
+        resource_type=resource_type,
+        resource_id=str(resource_id),
+        details=details or {},
+        ip_address=request.META.get('REMOTE_ADDR'),
+        user_agent=request.META.get('HTTP_USER_AGENT', ''),
+    )
+
+
 class APIKeyViewSet(viewsets.ModelViewSet):
     """ViewSet for managing API keys"""
     
@@ -48,15 +64,12 @@ class APIKeyViewSet(viewsets.ModelViewSet):
         api_key.is_active = False
         api_key.save()
         
-        # Log the action
-        DataAccessLog.objects.create(
-            user=request.user,
-            action='delete',
-            resource_type='APIKey',
-            resource_id=str(api_key.id),
-            resource_details={'name': api_key.name},
-            ip_address=request.META.get('REMOTE_ADDR'),
-            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        _log_data_access(
+            request,
+            DataAccessLog.AccessType.SHARE,
+            'APIKey',
+            api_key.id,
+            {'name': api_key.name, 'action': 'revoke'},
         )
         
         return Response({'message': 'API key revoked successfully'})
@@ -72,7 +85,7 @@ class APIKeyViewSet(viewsets.ModelViewSet):
             name=f"{old_key.name} (regenerated)",
             scope=old_key.scope,
             allowed_ips=old_key.allowed_ips,
-            rate_limit=old_key.rate_limit,
+            rate_limit_per_hour=old_key.rate_limit_per_hour,
             expires_at=old_key.expires_at,
             created_by=request.user
         )
@@ -101,14 +114,13 @@ class SecuritySettingViewSet(viewsets.ModelViewSet):
     
     def get_object(self):
         """Get or create security settings for organization"""
-        obj, created = SecuritySetting.objects.get_or_create(
+        obj, _created = SecuritySetting.objects.get_or_create(
             organization=self.request.user.organization,
-            defaults={'updated_by': self.request.user}
         )
         return obj
     
     def perform_update(self, serializer):
-        serializer.save(updated_by=self.request.user)
+        serializer.save()
 
 
 class MFADeviceViewSet(viewsets.ModelViewSet):
@@ -131,7 +143,7 @@ class MFADeviceViewSet(viewsets.ModelViewSet):
         
         mfa_type = serializer.validated_data['type']
         
-        if mfa_type == MFADevice.MFAType.TOTP:
+        if mfa_type == MFADevice.DeviceType.TOTP:
             # Generate TOTP secret
             secret = pyotp.random_base32()
             totp = pyotp.TOTP(secret)
@@ -150,9 +162,9 @@ class MFADeviceViewSet(viewsets.ModelViewSet):
             # Create unverified device
             device = MFADevice.objects.create(
                 user=request.user,
-                type=MFADevice.MFAType.TOTP,
+                device_type=MFADevice.DeviceType.TOTP,
                 name=serializer.validated_data.get('name', 'Authenticator App'),
-                secret_key=secret,
+                secret=secret,
                 is_verified=False
             )
             
@@ -163,7 +175,7 @@ class MFADeviceViewSet(viewsets.ModelViewSet):
                 'provisioning_uri': provisioning_uri
             })
         
-        elif mfa_type == MFADevice.MFAType.SMS:
+        elif mfa_type == MFADevice.DeviceType.SMS:
             phone_number = serializer.validated_data.get('phone_number')
             if not phone_number:
                 return Response(
@@ -173,7 +185,7 @@ class MFADeviceViewSet(viewsets.ModelViewSet):
             
             device = MFADevice.objects.create(
                 user=request.user,
-                type=MFADevice.MFAType.SMS,
+                device_type=MFADevice.DeviceType.SMS,
                 name=serializer.validated_data.get('name', 'SMS'),
                 phone_number=phone_number,
                 is_verified=False
@@ -188,11 +200,12 @@ class MFADeviceViewSet(viewsets.ModelViewSet):
                 'message': 'Verification code sent to your phone'
             })
         
-        elif mfa_type == MFADevice.MFAType.EMAIL:
+        elif mfa_type == MFADevice.DeviceType.EMAIL:
             device = MFADevice.objects.create(
                 user=request.user,
-                type=MFADevice.MFAType.EMAIL,
+                device_type=MFADevice.DeviceType.EMAIL,
                 name=serializer.validated_data.get('name', 'Email'),
+                email=request.user.email,
                 is_verified=False
             )
             
@@ -223,8 +236,8 @@ class MFADeviceViewSet(viewsets.ModelViewSet):
         
         code = serializer.validated_data['code']
         
-        if device.type == MFADevice.MFAType.TOTP:
-            totp = pyotp.TOTP(device.secret_key)
+        if device.device_type == MFADevice.DeviceType.TOTP:
+            totp = pyotp.TOTP(device.secret)
             if not totp.verify(code):
                 return Response(
                     {'error': 'Invalid verification code'},
@@ -242,7 +255,7 @@ class MFADeviceViewSet(viewsets.ModelViewSet):
             cache.delete(f'mfa_code_{device.id}')
         
         device.is_verified = True
-        device.last_used_at = timezone.now()
+        device.last_used = timezone.now()
         
         # Make primary if first device
         if not MFADevice.objects.filter(user=request.user, is_primary=True).exists():
@@ -287,7 +300,7 @@ class LoginAttemptViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         queryset = LoginAttempt.objects.filter(
             user__organization=self.request.user.organization
-        ).select_related('user').order_by('-created_at')
+        ).select_related('user').order_by('-timestamp')
         
         # Filter by user
         user_id = self.request.query_params.get('user')
@@ -297,7 +310,7 @@ class LoginAttemptViewSet(viewsets.ReadOnlyModelViewSet):
         # Filter by success
         success = self.request.query_params.get('success')
         if success is not None:
-            queryset = queryset.filter(success=success.lower() == 'true')
+            queryset = queryset.filter(successful=success.lower() == 'true')
         
         return queryset[:500]
 
@@ -316,12 +329,12 @@ class SessionViewSet(viewsets.ReadOnlyModelViewSet):
             return Session.objects.filter(
                 user__organization=self.request.user.organization,
                 is_active=True
-            ).select_related('user').order_by('-last_activity_at')
+            ).select_related('user').order_by('-last_activity')
         
         return Session.objects.filter(
             user=self.request.user,
             is_active=True
-        ).order_by('-last_activity_at')
+        ).order_by('-last_activity')
     
     @action(detail=True, methods=['post'])
     def terminate(self, request, pk=None):
@@ -373,7 +386,7 @@ class DataAccessLogViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         queryset = DataAccessLog.objects.filter(
             user__organization=self.request.user.organization
-        ).select_related('user').order_by('-created_at')
+        ).select_related('user').order_by('-timestamp')
         
         # Filter options
         user_id = self.request.query_params.get('user')
@@ -382,7 +395,7 @@ class DataAccessLogViewSet(viewsets.ReadOnlyModelViewSet):
         
         action = self.request.query_params.get('action')
         if action:
-            queryset = queryset.filter(action=action)
+            queryset = queryset.filter(access_type=action)
         
         resource_type = self.request.query_params.get('resource_type')
         if resource_type:
@@ -464,16 +477,18 @@ class PasswordResetConfirmView(APIView):
         user.set_password(new_password)
         user.save()
         
-        # Log the action
-        DataAccessLog.objects.create(
-            user=user,
-            action='update',
-            resource_type='User',
-            resource_id=str(user.id),
-            resource_details={'action': 'password_reset'},
-            ip_address=request.META.get('REMOTE_ADDR'),
-            user_agent=request.META.get('HTTP_USER_AGENT', '')
-        )
+        # Log the action when the user belongs to an organization
+        if user.organization_id:
+            DataAccessLog.objects.create(
+                organization=user.organization,
+                user=user,
+                access_type=DataAccessLog.AccessType.SHARE,
+                resource_type='User',
+                resource_id=str(user.id),
+                details={'action': 'password_reset'},
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
         
         # Invalidate all sessions
         Session.objects.filter(user=user).update(is_active=False)
@@ -495,7 +510,6 @@ class SecurityDashboardView(APIView):
         # Get settings
         settings, _ = SecuritySetting.objects.get_or_create(
             organization=org,
-            defaults={'updated_by': request.user}
         )
         
         # Get stats

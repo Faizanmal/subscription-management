@@ -26,12 +26,26 @@ from users.serializers import (
     UserInvitationSerializer, UserInvitationCreateSerializer,
     ChangePasswordSerializer, AuditLogSerializer, NotificationSerializer
 )
-from api.permissions import IsAdmin
+from api.permissions import IsAdmin, IsOrgMember
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     """Custom JWT token view with additional user claims"""
     serializer_class = CustomTokenObtainPairSerializer
+
+
+class LogoutView(generics.GenericAPIView):
+    """Blacklist the refresh token so the session cannot be reused."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh = request.data.get('refresh')
+        if refresh:
+            try:
+                RefreshToken(refresh).blacklist()
+            except Exception:
+                pass
+        return Response({'message': 'Logged out'})
 
 
 class RegisterView(generics.CreateAPIView):
@@ -234,16 +248,32 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     serializer_class = OrganizationSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
     
+    def get_permissions(self):
+        if self.action == 'current' and self.request.method == 'GET':
+            return [IsAuthenticated(), IsOrgMember()]
+        return [IsAuthenticated(), IsAdmin()]
+    
     def get_queryset(self):
         return Organization.objects.filter(id=self.request.user.organization_id)
     
     def get_object(self):
         return self.request.user.organization
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get', 'put', 'patch'])
     def current(self, request):
-        """Get current organization"""
-        serializer = self.get_serializer(request.user.organization)
+        """Get or update the current user's organization"""
+        org = request.user.organization
+        if not org:
+            return Response(
+                {'error': 'No organization associated with this account'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request.method == 'GET':
+            return Response(self.get_serializer(org).data)
+
+        serializer = self.get_serializer(org, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
@@ -371,18 +401,26 @@ class UserInvitationViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         return UserInvitation.objects.filter(organization=self.request.user.organization)
+
+    def create(self, request, *args, **kwargs):
+        from users.plans import require_seat_available
+
+        blocked = require_seat_available(request.user.organization)
+        if blocked:
+            return blocked
+        return super().create(request, *args, **kwargs)
     
     def perform_create(self, serializer):
         invitation = serializer.save()
         
         # Send invitation email
-        invite_url = f"{settings.FRONTEND_URL}/invite/{invitation.token}"
+        invite_url = f"{settings.FRONTEND_URL}/invite/accept?token={invitation.token}"
         send_mail(
             subject=f"You've been invited to join {invitation.organization.name} on SWM",
             message=f"""
             Hello,
             
-            {invitation.invited_by.full_name} has invited you to join {invitation.organization.name} 
+            {(invitation.invited_by.full_name if invitation.invited_by else 'A teammate')} has invited you to join {invitation.organization.name} 
             on Subscription Waste Manager.
             
             Click the link below to accept the invitation:
@@ -414,13 +452,13 @@ class UserInvitationViewSet(viewsets.ModelViewSet):
         invitation.save()
         
         # Resend email
-        invite_url = f"{settings.FRONTEND_URL}/invite/{invitation.token}"
+        invite_url = f"{settings.FRONTEND_URL}/invite/accept?token={invitation.token}"
         send_mail(
             subject=f"Reminder: You've been invited to join {invitation.organization.name}",
             message=f"""
             Hello,
             
-            This is a reminder that {invitation.invited_by.full_name} has invited you to join 
+            This is a reminder that {(invitation.invited_by.full_name if invitation.invited_by else 'A teammate')} has invited you to join 
             {invitation.organization.name} on Subscription Waste Manager.
             
             Click the link below to accept the invitation:

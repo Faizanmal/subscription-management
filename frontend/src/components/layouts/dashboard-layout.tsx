@@ -34,7 +34,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { useState, ReactNode } from 'react';
+import { useEffect, useState, FormEvent, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuthStore, useNotificationsStore, useOrganizationStore } from '@/lib/stores';
 
 interface NavItem {
@@ -112,14 +113,32 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const { user, logout } = useAuthStore();
-  const { organization } = useOrganizationStore();
-  const { unreadCount } = useNotificationsStore();
+  const { organization, fetchOrganization } = useOrganizationStore();
+  const { notifications, unreadCount, fetchNotifications, markAllAsRead, markAsRead } =
+    useNotificationsStore();
+
+  useEffect(() => {
+    void fetchOrganization();
+    void fetchNotifications();
+  }, [fetchOrganization, fetchNotifications]);
 
   const handleLogout = async () => {
     await logout();
-    window.location.href = '/login';
+    router.replace('/login');
+  };
+
+  const handleSearch = (e: FormEvent) => {
+    e.preventDefault();
+    const query = searchQuery.trim();
+    if (query) {
+      router.push(`/subscriptions?search=${encodeURIComponent(query)}`);
+    } else {
+      router.push('/subscriptions');
+    }
   };
 
   const getInitials = (name: string) => {
@@ -302,15 +321,17 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         {/* Top Header */}
         <header className="h-16 border-b bg-white dark:bg-gray-800 flex items-center justify-between px-6">
           {/* Search */}
-          <div className="flex-1 max-w-md">
+          <form onSubmit={handleSearch} className="flex-1 max-w-md">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
               <Input
                 placeholder="Search subscriptions, vendors..."
                 className="pl-10 bg-gray-50 dark:bg-gray-700 border-0"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-          </div>
+          </form>
 
           {/* Quick Actions */}
           <div className="flex items-center gap-4">
@@ -333,19 +354,51 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <DropdownMenuContent align="end" className="w-80">
                 <DropdownMenuLabel className="flex items-center justify-between">
                   Notifications
-                  <Button variant="ghost" size="sm" className="text-xs">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => {
+                      void markAllAsRead();
+                    }}
+                  >
                     Mark all read
                   </Button>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <div className="max-h-64 overflow-y-auto">
-                  <p className="p-4 text-sm text-gray-500 text-center">
-                    No new notifications
-                  </p>
+                  {notifications.length === 0 ? (
+                    <p className="p-4 text-sm text-gray-500 text-center">
+                      No new notifications
+                    </p>
+                  ) : (
+                    notifications.slice(0, 8).map((notification) => (
+                      <DropdownMenuItem
+                        key={notification.id}
+                        className="flex flex-col items-start gap-1 whitespace-normal"
+                        onClick={() => {
+                          if (!notification.is_read) {
+                            void markAsRead(notification.id);
+                          }
+                          const href = notification.action_url || notification.link;
+                          if (href) {
+                            window.location.href = href;
+                          }
+                        }}
+                      >
+                        <span className={notification.is_read ? 'text-sm' : 'text-sm font-medium'}>
+                          {notification.title}
+                        </span>
+                        <span className="text-xs text-gray-500 line-clamp-2">
+                          {notification.message}
+                        </span>
+                      </DropdownMenuItem>
+                    ))
+                  )}
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild className="justify-center">
-                  <Link href="/alerts">View all notifications</Link>
+                  <Link href="/settings/notifications">Notification settings</Link>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

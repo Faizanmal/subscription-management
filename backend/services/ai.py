@@ -110,7 +110,7 @@ class RecommendationEngine:
                 'monthly_cost': float(subscription.monthly_cost or 0),
                 'billing_cycle': subscription.billing_cycle,
                 'total_licenses': subscription.total_licenses,
-                'assigned_licenses': subscription.assigned_licenses,
+                'assigned_licenses': subscription.used_licenses,
                 'utilization_rate': subscription.utilization_rate,
                 'last_usage': str(subscription.last_usage_at) if subscription.last_usage_at else None,
                 'renewal_date': str(subscription.renewal_date) if subscription.renewal_date else None,
@@ -240,7 +240,7 @@ Provide a specific, actionable recommendation or return null if no action needed
                     'name': sub.name,
                     'monthly_cost': float(sub.monthly_cost or 0),
                     'utilization_rate': sub.utilization_rate,
-                    'active_users': sub.assigned_licenses
+                    'active_users': sub.used_licenses
                 })
             
             # Check with AI

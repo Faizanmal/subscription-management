@@ -59,6 +59,18 @@ class SoftwareVendor(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            base = slugify(self.name) or 'vendor'
+            slug = base
+            suffix = 1
+            while SoftwareVendor.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                suffix += 1
+                slug = f'{base}-{suffix}'
+            self.slug = slug
+        super().save(*args, **kwargs)
+
 
 class Subscription(models.Model):
     """Software subscription tracked by the organization"""
@@ -183,6 +195,11 @@ class Subscription(models.Model):
             return None
         delta = self.renewal_date - timezone.now().date()
         return delta.days
+
+    @property
+    def last_usage_at(self):
+        latest = self.subscription_users.order_by('-last_used').values_list('last_used', flat=True).first()
+        return latest
 
 
 class SubscriptionUser(models.Model):

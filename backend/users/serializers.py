@@ -45,13 +45,23 @@ class OrganizationSerializer(serializers.ModelSerializer):
             'is_enterprise', 'settings', 'user_count', 'subscription_count',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'slug', 'is_on_trial', 'is_enterprise', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'slug', 'plan', 'is_on_trial', 'is_enterprise', 'created_at', 'updated_at',
+        ]
     
     def get_user_count(self, obj):
         return obj.users.filter(is_active=True).count()
     
     def get_subscription_count(self, obj):
         return obj.subscriptions.filter(status='active').count()
+
+    def update(self, instance, validated_data):
+        incoming_settings = validated_data.pop('settings', None)
+        if incoming_settings is not None:
+            merged = dict(instance.settings or {})
+            merged.update(incoming_settings)
+            validated_data['settings'] = merged
+        return super().update(instance, validated_data)
 
 
 class OrganizationCreateSerializer(serializers.ModelSerializer):
