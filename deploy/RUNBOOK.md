@@ -155,6 +155,26 @@ If migrations are all marked applied and the column is still missing, migration
 history and schema disagree. Inspect that database before attempting a repair;
 do not fake migrations or delete database volumes.
 
+### Registration agreements fail to load in Codespaces
+
+The default Compose frontend uses same-origin `/api/v1` and `/ws` URLs and
+forwards them internally to `http://backend:8000`. Browser requests therefore use
+the forwarded frontend HTTPS address instead of the browser machine's localhost.
+Only the frontend port needs forwarding; do not expose PostgreSQL or Redis.
+Set the frontend URL before rebuilding so verification/reset links point to the
+Codespace as well:
+
+```sh
+export FRONTEND_URL="https://${CODESPACE_NAME}-3000.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev}"
+docker compose up -d --build backend celery celery-beat frontend
+```
+
+Check `/api/v1/auth/policies/` on the forwarded port 3000 URL: it should return
+JSON with `terms_version` and `privacy_version`. Reload registration after the
+rebuild. Agreement enforcement stays enabled. For non-Docker development, use
+the optional same-origin settings in `frontend/.env.example` with the local
+backend upstream, then restart Next.
+
 ## Support channel
 
 - Product: support@subscriptionwastemanager.com

@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
 
-function harness() {
+function harness(env = {}, origin = 'http://localhost') {
   const storage = new Map([['swm-auth', JSON.stringify({ state: { accessToken: 'old-access', refreshToken: 'old-refresh' } })]]);
   let rejectResponse;
   let postCount = 0;
@@ -27,9 +27,10 @@ function harness() {
   vm.runInNewContext(output, {
     exports,
     require: (name) => { assert.equal(name, 'axios'); return axios; },
-    process: { env: {} },
+    process: { env },
+    URL,
     localStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },
-    window: { location: { origin: 'http://localhost', assign() { throw new Error('Unexpected login redirect'); } } },
+    window: { location: { origin, assign() { throw new Error('Unexpected login redirect'); } } },
   });
   return {
     exports, storage,
@@ -57,4 +58,33 @@ test('invalid login does not trigger token refresh', async () => {
   const app = harness();
   await assert.rejects(app.reject('/auth/token/'));
   assert.equal(app.count(), 0);
+});
+
+test('relative API and websocket URLs stay on the forwarded frontend origin', () => {
+  const app = harness({ NEXT_PUBLIC_API_URL: '/api/v1', NEXT_PUBLIC_WS_URL: '/ws' });
+  assert.equal(app.exports.api.baseUrl, '/api/v1');
+  assert.equal(app.exports.api.wsUrl, 'ws://localhost/ws');
+  assert.equal(app.exports.socialLoginUrl('google'), '/social/login/google-oauth2/');
+});
+
+test('relative websocket URL uses WSS on Codespaces HTTPS', () => {
+  const origin = 'https://example-3000.app.github.dev';
+  const app = harness({ NEXT_PUBLIC_API_URL: '/api/v1', NEXT_PUBLIC_WS_URL: '/ws' }, origin);
+  assert.equal(app.exports.api.wsUrl, 'wss://example-3000.app.github.dev/ws');
+});
+
+test('development proxy preserves Django trailing slashes and leaves avatar paths intact', async () => {
+  const source = readFileSync(new URL('../next.config.ts', import.meta.url), 'utf8');
+  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const exports = {};
+  vm.runInNewContext(output, {
+    exports,
+    require: () => ({ runGuard: () => 0 }),
+    process: { env: { INTERNAL_API_URL: 'http://backend:8000/' } },
+  });
+  const config = exports.default;
+  assert.equal(config.skipTrailingSlashRedirect, true);
+  const rules = await config.rewrites();
+  assert.equal(rules.find(rule => rule.source === '/api/:path*').destination, 'http://backend:8000/api/:path*/');
+  assert.equal(rules.find(rule => rule.source === '/media/avatars/:path*').destination, 'http://backend:8000/media/avatars/:path*');
 });

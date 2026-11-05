@@ -197,7 +197,14 @@ export const api = {
   delete: del,
   client: apiClient,
   baseUrl: API_BASE_URL,
-  wsUrl: WS_BASE_URL,
+  get wsUrl() {
+    if (WS_BASE_URL.startsWith('/') && typeof window !== 'undefined') {
+      const url = new URL(WS_BASE_URL, window.location.origin);
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      return url.toString().replace(/\/$/, '');
+    }
+    return WS_BASE_URL;
+  },
 };
 
 export default api;
