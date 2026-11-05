@@ -132,6 +132,29 @@ future base-image updates.
 
 Rollback: redeploy previous image tags; avoid reverse migrations. Prefer forward-fix migrations.
 
+### Beat reports a missing database column
+
+If Beat reports `django_celery_beat_crontabschedule.timezone does not exist`,
+stop background processes and apply migrations using the rebuilt backend image.
+For the default development Compose file:
+
+```sh
+docker compose stop celery celery-beat
+docker compose build backend celery celery-beat
+docker compose run --rm backend python manage.py migrate --noinput
+docker compose run --rm backend python manage.py showmigrations django_celery_beat
+docker compose up -d backend celery celery-beat
+docker compose logs --tail=80 backend celery-beat
+```
+
+For production, add `-f docker-compose.prod.yml --env-file backend/.env.prod`
+to each `docker compose` command. The development stack now waits for backend
+health before starting background processes; the backend migrates before serving
+health checks. Celery also rejects startup when migrations remain pending.
+If migrations are all marked applied and the column is still missing, migration
+history and schema disagree. Inspect that database before attempting a repair;
+do not fake migrations or delete database volumes.
+
 ## Support channel
 
 - Product: support@subscriptionwastemanager.com
