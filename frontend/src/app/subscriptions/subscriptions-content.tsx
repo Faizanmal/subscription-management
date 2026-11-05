@@ -1,5 +1,6 @@
 'use client';
 
+import { FormMessage } from '@/components/form-message';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -101,6 +102,7 @@ export default function SubscriptionsContent() {
   const {
     subscriptions,
     totalCount,
+    error: loadError,
     isLoading,
     filters,
     fetchSubscriptions,
@@ -210,8 +212,9 @@ export default function SubscriptionsContent() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {loadError && <div><FormMessage message="Subscriptions could not load. Retry to see current records." /><Button variant="outline" onClick={() => void fetchSubscriptions()}>Retry loading</Button></div>}
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
               Subscriptions
@@ -321,7 +324,7 @@ export default function SubscriptionsContent() {
         </Card>
 
         {/* Results Count */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-gray-500">
             Showing {subscriptions.length} of {totalCount} subscriptions
           </p>

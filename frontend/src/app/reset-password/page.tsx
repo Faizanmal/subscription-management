@@ -2,116 +2,35 @@
 
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { useSearchParams } from 'next/navigation';
+import { Loader2, ShieldCheck } from 'lucide-react';
+import { AuthShell } from '@/components/auth-shell';
+import { PasswordInput } from '@/components/password-input';
+import { FormMessage } from '@/components/form-message';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Loader2, ArrowLeft } from 'lucide-react';
-import { toast } from 'sonner';
 import { authApi } from '@/lib/services';
+import { apiErrorMessage } from '@/lib/api-error';
+import { useAuthStore } from '@/lib/stores';
 
-function ResetPasswordForm() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const token = searchParams.get('token') || '';
-
+function ResetForm() {
+  const token = useSearchParams().get('token') || '';
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!token) {
-      toast.error('This reset link is missing a token');
-      return;
-    }
-    if (password.length < 10) {
-      toast.error('Password must be at least 10 characters');
-      return;
-    }
-    if (password !== confirmPassword) {
-      toast.error('Passwords do not match');
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      await authApi.confirmPasswordReset(token, password, confirmPassword);
-      toast.success('Password updated. Please sign in.');
-      router.push('/login');
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      toast.error(err.message || 'Unable to reset password');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <Card className="shadow-xl border-0">
-      <CardHeader>
-        <CardTitle>Choose a new password</CardTitle>
-        <CardDescription>Use at least 10 characters</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="password">New password</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={isLoading}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="confirm">Confirm password</Label>
-            <Input
-              id="confirm"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              disabled={isLoading}
-            />
-          </div>
-          <Button type="submit" className="w-full" disabled={isLoading || !token}>
-            {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Updating...
-              </>
-            ) : (
-              'Update password'
-            )}
-          </Button>
-        </form>
-      </CardContent>
-      <CardFooter className="flex justify-center border-t pt-6">
-        <Link href="/login" className="text-sm text-blue-600 hover:underline inline-flex items-center">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to sign in
-        </Link>
-      </CardFooter>
-    </Card>
-  );
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [complete, setComplete] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setError('');
+    if (password.length < 10 || password !== confirm) return setError('Use at least 10 characters and make both passwords match.');
+    setBusy(true);
+    try { await authApi.confirmPasswordReset(token, password, confirm); useAuthStore.getState().clearAuth(); setComplete(true); }
+    catch (failure) { setError(apiErrorMessage(failure, 'The reset link may be invalid or expired. Request a new link and try again.')); }
+    finally { setBusy(false); }
+  }
+  return <Card><CardContent className="space-y-5 pt-6">{complete ? <div role="status" className="space-y-5"><ShieldCheck className="h-9 w-9 text-primary" aria-hidden="true" /><h2 className="text-xl font-semibold">Your password is updated.</h2><p className="text-sm leading-7 text-muted-foreground">Sign in again with the new password and your authenticator code if MFA is enabled.</p><Button asChild className="w-full"><Link href="/login">Sign in</Link></Button></div> : !token ? <><FormMessage message="This link is missing its reset information. Request a new password-reset link to continue." /><Button asChild className="w-full"><Link href="/forgot-password">Request a new link</Link></Button></> : <form onSubmit={submit} className="space-y-5" aria-busy={busy}><FormMessage message={error} /><div className="space-y-2"><Label htmlFor="password">New password</Label><PasswordInput id="password" name="password" autoComplete="new-password" minLength={10} required value={password} disabled={busy} onChange={event => setPassword(event.target.value)} /><p className="text-xs leading-5 text-muted-foreground">At least 10 characters. Avoid common or entirely numeric passwords.</p></div><div className="space-y-2"><Label htmlFor="confirm">Confirm new password</Label><PasswordInput id="confirm" name="confirm_password" autoComplete="new-password" minLength={10} required value={confirm} disabled={busy} onChange={event => setConfirm(event.target.value)} /></div><Button type="submit" className="w-full" disabled={busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}{busy ? 'Updating password…' : 'Update password'}</Button><p className="text-center text-sm"><Link href="/forgot-password" className="text-primary underline">Request a fresh link</Link></p></form>}</CardContent></Card>;
 }
-
 export default function ResetPasswordPage() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl mb-4">
-            <span className="text-2xl font-bold text-white">S</span>
-          </div>
-          <h1 className="text-2xl font-bold">Set a new password</h1>
-        </div>
-        <Suspense fallback={<p className="text-center text-gray-500">Loading...</p>}>
-          <ResetPasswordForm />
-        </Suspense>
-      </div>
-    </div>
-  );
+  return <AuthShell title="Choose a new password." description="A reset link can be used once. Keep your new password unique to this account."><Suspense fallback={<p role="status" className="text-center text-muted-foreground">Loading reset form…</p>}><ResetForm /></Suspense></AuthShell>;
 }

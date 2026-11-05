@@ -7,7 +7,7 @@ export const metadata = {
 
 export default function SecurityPage() {
   return (
-    <LegalShell title="Security overview" updated="November 1, 2026">
+    <LegalShell title="Security overview" updated="November 4, 2026">
       <p>
         We design Subscription Waste Manager for B2B SaaS spend data. This page summarizes
         baseline controls — not a SOC 2 report.
@@ -18,14 +18,14 @@ export default function SecurityPage() {
         <li>JWT authentication with refresh rotation and brute-force protections.</li>
         <li>Organization-scoped API queries and role-based permissions.</li>
         <li>Optional MFA (TOTP) for user accounts.</li>
-        <li>Integration secrets encrypted at rest when <code>ENCRYPTION_KEY</code> is set.</li>
+        <li>Integration credentials use encryption configured by the service operator.</li>
       </ul>
 
       <h2>Infrastructure</h2>
       <ul>
         <li>TLS in production (HTTPS redirect and secure cookies when debug is off).</li>
-        <li>Managed Postgres and Redis recommended for production deployments.</li>
-        <li>Background workers for sync and alerts; health check at <code>/api/v1/health/</code>.</li>
+        <li>Access to hosted systems must be restricted to authorized operators.</li>
+        <li>Background processing supports connector sync and alerts.</li>
         <li>Optional Sentry error reporting without sending payment card data.</li>
       </ul>
 
@@ -33,7 +33,7 @@ export default function SecurityPage() {
       <ul>
         <li>Grant least-privilege OAuth scopes and revoke unused connectors.</li>
         <li>Use strong admin passwords and enable MFA for privileged users.</li>
-        <li>Keep Stripe and OAuth client secrets out of source control.</li>
+        <li>Review invitations and integration permissions regularly.</li>
       </ul>
 
       <h2>Data access</h2>

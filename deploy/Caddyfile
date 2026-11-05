@@ -1,0 +1,17 @@
+{$APP_HOST} {
+    reverse_proxy frontend:3000
+}
+
+{$API_HOST} {
+    handle /media/avatars/* {
+        uri strip_prefix /media
+        root * /srv/swm-media
+        header X-Content-Type-Options nosniff
+        file_server
+    }
+    handle {
+    reverse_proxy backend:8000 {
+        header_up X-Forwarded-Proto {scheme}
+    }
+    }
+}

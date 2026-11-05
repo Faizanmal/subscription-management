@@ -6,7 +6,7 @@ export const metadata = {
 
 export default function TermsPage() {
   return (
-    <LegalShell title="Terms of Service" updated="November 1, 2026">
+    <LegalShell title="Terms of Service" updated="November 4, 2026">
       <p>
         These Terms govern use of Subscription Waste Manager (&quot;SWM&quot;, &quot;Service&quot;).
         By creating an account you agree to them on behalf of your organization.

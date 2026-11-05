@@ -1,5 +1,6 @@
 'use client';
 
+import { FormMessage } from '@/components/form-message';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
@@ -49,6 +50,7 @@ export default function DashboardPage() {
     lowUtilization,
     upcomingRenewals,
     isLoading,
+    error: loadError,
     fetchDashboard,
     refreshDashboard,
   } = useDashboardStore();
@@ -85,8 +87,9 @@ export default function DashboardPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {loadError && <div><FormMessage message="This information could not load. Retry before relying on the totals below." /><Button variant="outline" onClick={() => void fetchDashboard()}>Retry loading</Button></div>}
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
               Dashboard
@@ -328,7 +331,7 @@ export default function DashboardPage() {
           {/* Quick Wins */}
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-lg">Quick Wins</CardTitle>
                 <Lightbulb className="h-5 w-5 text-yellow-500" />
               </div>
@@ -382,7 +385,7 @@ export default function DashboardPage() {
           {/* Low Utilization */}
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-lg">Low Utilization</CardTitle>
                 <TrendingDown className="h-5 w-5 text-orange-500" />
               </div>
@@ -403,7 +406,7 @@ export default function DashboardPage() {
                       href={`/subscriptions/${sub.id}`}
                       className="block p-3 rounded-lg border hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex-1">
                           <p className="text-sm font-medium">{sub.name}</p>
                           <p className="text-xs text-gray-500">
@@ -437,7 +440,7 @@ export default function DashboardPage() {
           {/* Upcoming Renewals */}
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <CardTitle className="text-lg">Upcoming Renewals</CardTitle>
                 <Clock className="h-5 w-5 text-blue-500" />
               </div>
@@ -465,7 +468,7 @@ export default function DashboardPage() {
                         href={`/subscriptions/${sub.id}`}
                         className="block p-3 rounded-lg border hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                           <div className="flex-1">
                             <p className="text-sm font-medium">{sub.name}</p>
                             <p className="text-xs text-gray-500">
@@ -497,7 +500,7 @@ export default function DashboardPage() {
         {/* Top Spend */}
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-lg">Top Spending Subscriptions</CardTitle>
                 <CardDescription>Your highest cost subscriptions</CardDescription>

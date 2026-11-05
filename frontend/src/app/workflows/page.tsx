@@ -1,5 +1,6 @@
 'use client';
 
+import { FormMessage } from '@/components/form-message';
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { workflowsApi } from '@/lib/services';
@@ -124,6 +125,7 @@ const ACTION_LABELS: Record<WorkflowAction, string> = {
 export default function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<WorkflowType[]>([]);
   const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
+  const [loadError, setLoadError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingWorkflow, setEditingWorkflow] = useState<WorkflowType | null>(null);
@@ -140,6 +142,7 @@ export default function WorkflowsPage() {
 
   async function loadData() {
     setIsLoading(true);
+    setLoadError('');
     try {
       const [workflowsData, executionsData] = await Promise.all([
         workflowsApi.list(),
@@ -148,6 +151,7 @@ export default function WorkflowsPage() {
       setWorkflows(Array.isArray(workflowsData) ? workflowsData : workflowsData.results || []);
       setExecutions(Array.isArray(executionsData) ? executionsData : executionsData.results || []);
     } catch {
+      setLoadError('Information could not load. Retry to see current records.');
       toast.error('Failed to load workflows');
     } finally {
       setIsLoading(false);
@@ -259,7 +263,7 @@ export default function WorkflowsPage() {
       <DashboardLayout>
         <div className="space-y-6">
           <Skeleton className="h-10 w-64" />
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -273,8 +277,9 @@ export default function WorkflowsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {loadError && <div><FormMessage message={loadError} /><Button variant="outline" onClick={() => void loadData()}>Retry loading</Button></div>}
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold">Automation Workflows</h1>
             <p className="text-gray-500">
@@ -452,7 +457,7 @@ export default function WorkflowsPage() {
                   </div>
                 )}
 
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <Label htmlFor="is_active">Active</Label>
                   <Switch
                     id="is_active"
@@ -514,7 +519,7 @@ export default function WorkflowsPage() {
 
         {/* Tabs */}
         <Tabs defaultValue="workflows">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="workflows">Workflows</TabsTrigger>
             <TabsTrigger value="history">Execution History</TabsTrigger>
           </TabsList>
@@ -605,7 +610,7 @@ export default function WorkflowsPage() {
                         </Badge>
                       </div>
 
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={workflow.is_active}
@@ -776,7 +781,7 @@ export default function WorkflowsPage() {
                   </Select>
                 </div>
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <Label htmlFor="edit-is_active">Active</Label>
                 <Switch
                   id="edit-is_active"

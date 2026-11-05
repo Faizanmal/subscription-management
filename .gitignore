@@ -220,6 +220,10 @@ dist
 # Gatsby files
 .cache/
 public
+# The standalone Docker build needs this directory even without public assets.
+!frontend/public/
+frontend/public/*
+!frontend/public/.gitkeep
 
 # Storybook build outputs
 .out

@@ -1,5 +1,6 @@
 'use client';
 
+import { FormMessage } from '@/components/form-message';
 import { useEffect, useState, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { useDashboardStore } from '@/lib/stores';
@@ -82,10 +83,12 @@ export default function AnalyticsPage() {
   const [usageData, setUsageData] = useState<UsageMetrics[]>([]);
   const [departmentData, setDepartmentData] = useState<{ name: string; spend: number; subscriptions: number }[]>([]);
   const [dateRange, setDateRange] = useState('30d');
+  const [loadError, setLoadError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
+    setLoadError('');
     try {
       await fetchDashboardStats();
       const [redundancyData, costsData, usageStats, spendSummary] = await Promise.all([
@@ -105,6 +108,7 @@ export default function AnalyticsPage() {
         }))
       );
     } catch {
+      setLoadError('Information could not load. Retry to see current records.');
     } finally {
       setIsLoading(false);
     }
@@ -169,7 +173,7 @@ export default function AnalyticsPage() {
       <DashboardLayout>
         <div className="space-y-6">
           <Skeleton className="h-10 w-64" />
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -184,8 +188,9 @@ export default function AnalyticsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {loadError && <div><FormMessage message={loadError} /><Button variant="outline" onClick={() => void loadData()}>Retry loading</Button></div>}
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold">Analytics</h1>
             <p className="text-gray-500">
@@ -309,7 +314,7 @@ export default function AnalyticsPage() {
 
         {/* Tabs */}
         <Tabs defaultValue="spending">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="spending">Spending</TabsTrigger>
             <TabsTrigger value="usage">Usage</TabsTrigger>
             <TabsTrigger value="redundancy">Redundancy</TabsTrigger>

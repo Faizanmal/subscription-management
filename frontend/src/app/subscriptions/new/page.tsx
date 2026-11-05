@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useOwnerOptions } from '@/lib/use-owner-options';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
-import { useSubscriptionsStore, useOrganizationStore } from '@/lib/stores';
+import { useSubscriptionsStore } from '@/lib/stores';
 import { vendorsApi } from '@/lib/services';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -64,7 +65,7 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
 export default function NewSubscriptionPage() {
   const router = useRouter();
   const { createSubscription } = useSubscriptionsStore();
-  const { members } = useOrganizationStore();
+  const { members, error: ownerError, loading: ownersLoading, reload: reloadOwners } = useOwnerOptions();
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [vendorSearch, setVendorSearch] = useState('');
@@ -518,6 +519,8 @@ export default function NewSubscriptionPage() {
                 {/* Owner */}
                 <div className="space-y-2">
                   <Label>Owner</Label>
+                  {ownerError && <p role="alert" className="text-sm text-destructive">{ownerError} <button type="button" className="underline" onClick={() => void reloadOwners()}>Retry owners</button></p>}
+                  {ownersLoading && <p role="status" className="text-xs text-muted-foreground">Loading owners…</p>}
                   <Select
                     value={formData.owner_id || 'unassigned'}
                     onValueChange={(v) =>
@@ -531,7 +534,7 @@ export default function NewSubscriptionPage() {
                       <SelectItem value="unassigned">Unassigned</SelectItem>
                       {members.map((member) => (
                         <SelectItem key={member.id} value={member.id}>
-                          {member.first_name} {member.last_name}
+                          {member.full_name}
                         </SelectItem>
                       ))}
                     </SelectContent>

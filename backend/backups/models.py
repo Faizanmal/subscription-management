@@ -83,6 +83,9 @@ class Backup(models.Model):
     name = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     
+    restore_status = models.CharField(max_length=20, default='idle')
+    restore_error = models.CharField(max_length=255, blank=True)
+
     # Storage
     file_path = models.CharField(max_length=500)
     file_size = models.BigIntegerField(default=0)  # bytes

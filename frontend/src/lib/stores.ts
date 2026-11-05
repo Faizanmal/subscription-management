@@ -3,10 +3,11 @@
  */
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { persistAuthTokens } from './api-base';
+import { persistAuthTokens, setAuthRefreshListener } from './api-base';
 import { immer } from 'zustand/middleware/immer';
 import type {
   User,
+  RegisterData,
   UserRole,
   Organization,
   Subscription,
@@ -37,15 +38,8 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
 
-  login: (email: string, password: string) => Promise<void>;
-  register: (data: {
-    email: string;
-    password: string;
-    password_confirm: string;
-    first_name: string;
-    last_name: string;
-    organization_name: string;
-  }) => Promise<void>;
+  login: (email: string, password: string, otp?: string) => Promise<void>;
+  register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   fetchUser: () => Promise<void>;
   loadProfile: () => Promise<void>;
@@ -64,14 +58,14 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       error: null,
 
-      login: async (email, password) => {
+      login: async (email, password, otp) => {
         set((state) => {
           state.isLoading = true;
           state.error = null;
         });
 
         try {
-          const tokens = await authApi.login({ email, password });
+          const tokens = await authApi.login({ email, password, otp });
           persistAuthTokens(tokens.access, tokens.refresh);
           set((state) => {
             state.accessToken = tokens.access;
@@ -192,6 +186,9 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+// Keep logout and WebSocket consumers synchronized with refresh rotation.
+setAuthRefreshListener((access, refresh) => useAuthStore.getState().setTokens(access, refresh));
 
 // ==================== Organization Store ====================
 

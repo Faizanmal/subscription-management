@@ -1,4 +1,6 @@
 #!/bin/sh
 set -e
-python manage.py migrate --noinput
+if [ "$1" = "daphne" ]; then
+    python manage.py migrate --noinput
+fi
 exec "$@"

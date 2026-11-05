@@ -7,10 +7,9 @@ export const metadata = {
 
 export default function DataPage() {
   return (
-    <LegalShell title="Your data — export & deletion" updated="November 1, 2026">
+    <LegalShell title="Your data — export & deletion" updated="November 4, 2026">
       <p>
-        Organization admins can export workspace data and request deletion. This is our baseline
-        GDPR-oriented process until a formal DPA program is published.
+        Organization admins can export workspace data and request deletion. Contact us to discuss a data request. A formal data processing agreement has not yet been published.
       </p>
 
       <h2>Export</h2>

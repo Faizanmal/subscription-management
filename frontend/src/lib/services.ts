@@ -4,6 +4,9 @@
 import { api } from './api-base';
 import type {
   User,
+  UserRole,
+  PolicyVersions,
+  PolicyAcceptancePayload,
   Organization,
   Invitation,
   Subscription,
@@ -46,7 +49,18 @@ import type {
 
 // ==================== Auth API ====================
 
+function normalizeAuthUser(user: User): User {
+  const dto = user as User & { role_type?: UserRole; organization?: string; is_verified?: boolean };
+  return { ...user, role: dto.role_type || user.role || 'viewer', role_id: dto.role_type ? user.role : user.role_id, organization_id: user.organization_id || dto.organization || '', email_verified: user.email_verified ?? dto.is_verified ?? false };
+}
+
 export const authApi = {
+  requestVerification: () => api.post<{ message: string }>('/auth/verification/request/'),
+  confirmVerification: (token: string) => api.post<{ message: string }>('/auth/verification/confirm/', { token }),
+  exchangeSocialCode: (code: string, verifier: string) => api.post<{ tokens: AuthTokens; user: User }>('/auth/social/exchange/', { code, verifier }),
+  startOrganization: (name: string) => api.post('/auth/organization/start/', { name }),
+  getPolicies: () => api.get<PolicyVersions>('/auth/policies/'),
+  acceptPolicies: (data: PolicyAcceptancePayload) => api.post('/auth/agreements/', data),
   login: (credentials: LoginCredentials) =>
     api.post<AuthTokens>('/auth/token/', credentials),
 
@@ -58,7 +72,11 @@ export const authApi = {
       first_name: data.first_name,
       last_name: data.last_name,
       organization_name: data.organization_name,
-    }),
+      accept_terms: data.accept_terms,
+      acknowledge_privacy: data.acknowledge_privacy,
+      terms_version: data.terms_version,
+      privacy_version: data.privacy_version,
+    }).then(result => ({ ...result, user: normalizeAuthUser(result.user) })),
 
   logout: (refresh?: string | null) =>
     api.post('/auth/logout/', refresh ? { refresh } : {}),
@@ -67,10 +85,17 @@ export const authApi = {
     api.post<{ access: string }>('/auth/token/refresh/', { refresh }),
 
   me: () =>
-    api.get<User>('/auth/me/'),
+    api.get<User>('/auth/me/').then(normalizeAuthUser),
 
   updateProfile: (data: Partial<User>) =>
-    api.patch<User>('/auth/me/', data),
+    (() => {
+      if (!(data.avatar instanceof File)) return api.patch('/auth/me/', data).then(() => api.get<User>('/auth/me/')).then(normalizeAuthUser);
+      const body = new FormData();
+      for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined && value !== null) body.append(key, value instanceof File ? value : String(value));
+      }
+      return api.patch('/auth/me/', body, { headers: { 'Content-Type': undefined } }).then(() => api.get<User>('/auth/me/')).then(normalizeAuthUser);
+    })(),
 
   changePassword: (data: {
     current_password: string;
@@ -92,7 +117,7 @@ export const authApi = {
       confirm_password: password2,
     }),
 
-  acceptInvitation: (data: {
+  acceptInvitation: (data: PolicyAcceptancePayload & {
     token: string;
     password: string;
     password_confirm: string;
@@ -127,7 +152,9 @@ export const organizationApi = {
     api.patch<Organization>('/auth/organizations/current/', { settings }),
 
   getMembers: () =>
-    api.get<User[]>('/auth/users/'),
+    api.get<User[] | PaginatedResponse<User>>('/auth/users/').then(data => unwrapList(data).map(normalizeAuthUser)),
+
+  getRoles: () => api.get<{ id: string; name: string; type: UserRole }[] | PaginatedResponse<{ id: string; name: string; type: UserRole }>>('/auth/roles/').then(unwrapList),
 
   getMember: (id: string) =>
     api.get<User>(`/auth/users/${id}/`),
@@ -139,7 +166,7 @@ export const organizationApi = {
     api.delete(`/auth/users/${id}/`),
 
   getInvitations: () =>
-    api.get<Invitation[]>('/auth/invitations/'),
+    api.get<Invitation[] | PaginatedResponse<Invitation>>('/auth/invitations/').then(unwrapList),
 
   sendInvitation: (data: { email: string; role: string }) =>
     api.post<Invitation>('/auth/invitations/', data),
@@ -761,7 +788,7 @@ export const securityApi = {
 export const backupsApi = {
   // Schedules
   getSchedules: () =>
-    api.get<BackupSchedule[]>('/backups/schedules/'),
+    api.get<BackupSchedule[] | PaginatedResponse<BackupSchedule>>('/backups/schedules/').then(unwrapList),
 
   createSchedule: (data: Partial<BackupSchedule>) =>
     api.post<BackupSchedule>('/backups/schedules/', data),
@@ -774,23 +801,23 @@ export const backupsApi = {
 
   // Backups
   getBackups: () =>
-    api.get<Backup[]>('/backups/'),
+    api.get<Backup[] | PaginatedResponse<Backup>>('/backups/backups/').then(unwrapList),
 
-  createBackup: () =>
-    api.post<Backup>('/backups/', { type: 'manual' }),
+  createBackup: (scheduleId?: string) =>
+    api.post<{ backup_id: string }>(scheduleId ? `/backups/schedules/${scheduleId}/run_now/` : '/backups/backups/create_manual/', {}).then(result => api.get<Backup>(`/backups/backups/${result.backup_id}/`)),
 
   downloadBackup: (id: string) =>
-    api.get<{ download_url: string }>(`/backups/${id}/download/`),
+    api.get<{ download_url: string }>(`/backups/backups/${id}/download/`),
 
   restoreBackup: (id: string) =>
-    api.post<{ task_id: string }>(`/backups/${id}/restore/`),
+    api.post<{ task_id: string }>(`/backups/backups/${id}/restore/`, { confirm: true }),
 
   deleteBackup: (id: string) =>
-    api.delete(`/backups/${id}/`),
+    api.delete(`/backups/backups/${id}/`),
 
   // Exports
   getExports: () =>
-    api.get<DataExport[]>('/backups/exports/'),
+    api.get<DataExport[] | PaginatedResponse<DataExport>>('/backups/exports/').then(unwrapList),
 
   createExport: (data: {
     format: string;
@@ -811,7 +838,7 @@ export const backupsApi = {
 
   // Imports
   getImports: () =>
-    api.get<ImportJob[]>('/backups/imports/'),
+    api.get<ImportJob[] | PaginatedResponse<ImportJob>>('/backups/imports/').then(unwrapList),
 
   createImport: (file: File, importType: string) => {
     const formData = new FormData();

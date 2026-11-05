@@ -56,6 +56,7 @@ class Organization(models.Model):
     plan = models.CharField(max_length=20, choices=PlanType.choices, default=PlanType.STARTER)
     stripe_customer_id = models.CharField(max_length=255, blank=True, null=True)
     stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True)
+    stripe_checkout_session_id = models.CharField(max_length=255, blank=True, default='')
     trial_ends_at = models.DateTimeField(blank=True, null=True)
     
     # Currency settings
@@ -90,6 +91,14 @@ class Organization(models.Model):
     @property
     def is_enterprise(self):
         return self.plan == self.PlanType.ENTERPRISE
+
+
+class BillingWebhookEvent(models.Model):
+    """Durable deduplication; intentionally does not store payment payloads."""
+
+    event_id = models.CharField(max_length=255, primary_key=True)
+    event_type = models.CharField(max_length=100)
+    processed_at = models.DateTimeField(auto_now_add=True)
 
 
 class Department(models.Model):
@@ -189,6 +198,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
     
     # Preferences
     timezone = models.CharField(max_length=50, default='UTC')
@@ -226,6 +236,36 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def is_finance(self):
         return self.role and self.role.type in [Role.RoleType.ADMIN, Role.RoleType.FINANCE]
+
+
+class EmailVerification(models.Model):
+    code_hash = models.CharField(max_length=64, primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='email_verifications')
+    email = models.EmailField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+
+class SocialLoginCode(models.Model):
+    code_hash = models.CharField(max_length=64, primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    challenge = models.CharField(max_length=43)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+
+class PolicyAcceptance(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='policy_acceptances')
+    terms_version = models.CharField(max_length=64)
+    privacy_version = models.CharField(max_length=64)
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(max_length=20)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'terms_version', 'privacy_version'], name='unique_user_policy_versions')]
+        ordering = ['-accepted_at']
 
 
 class UserInvitation(models.Model):

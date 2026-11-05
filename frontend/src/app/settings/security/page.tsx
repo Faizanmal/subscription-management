@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { securityApi } from '@/lib/services';
-// import { useAuthStore } from '@/lib/stores';
+import { useAuthStore } from '@/lib/stores';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -66,7 +66,9 @@ import { format } from 'date-fns';
 import type { APIKey, MFADevice, Session, AuditLog } from '@/types/swm';
 
 export default function SecurityPage() {
-  // const { user } = useAuthStore();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'admin';
+  const [loadError, setLoadError] = useState('');
   
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
   const [mfaDevices, setMfaDevices] = useState<MFADevice[]>([]);
@@ -88,29 +90,25 @@ export default function SecurityPage() {
 
   async function loadData() {
     setIsLoading(true);
-    try {
-      const [keys, devices, sessionData, logs] = await Promise.all([
-        securityApi.listApiKeys(),
-        securityApi.listMfaDevices(),
-        securityApi.listSessions(),
-        securityApi.getAuditLogs(),
-      ]);
-      setApiKeys(Array.isArray(keys) ? keys : keys.results || []);
-      setMfaDevices(Array.isArray(devices) ? devices : devices.results || []);
-      setSessions(Array.isArray(sessionData) ? sessionData : sessionData.results || []);
-      setAuditLogs(Array.isArray(logs) ? logs : logs.results || []);
-    } catch {
-    } finally {
-      setIsLoading(false);
-    }
+    setLoadError('');
+    const results = await Promise.allSettled([
+      securityApi.listMfaDevices().then(data => setMfaDevices(Array.isArray(data) ? data : data.results || [])),
+      securityApi.listSessions().then(data => setSessions(Array.isArray(data) ? data : data.results || [])),
+      ...(isAdmin ? [
+        securityApi.listApiKeys().then(data => setApiKeys(Array.isArray(data) ? data : data.results || [])),
+        securityApi.getAuditLogs().then(data => setAuditLogs(Array.isArray(data) ? data : data.results || [])),
+      ] : []),
+    ]);
+    if (results.some(result => result.status === 'rejected')) setLoadError('Some security information could not load. Retry before making changes.');
+    setIsLoading(false);
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadData();
-    }, 0);
+    const timer = window.setTimeout(() => { void loadData(); }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+    // Reload permission-dependent sections when the authenticated role becomes available.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   const handleCreateApiKey = async () => {
     try {
@@ -211,7 +209,7 @@ export default function SecurityPage() {
       <DashboardLayout>
         <div className="space-y-6">
           <Skeleton className="h-10 w-64" />
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -244,14 +242,14 @@ export default function SecurityPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>API Keys</CardDescription>
-              <CardTitle className="text-3xl">{apiKeys.length}</CardTitle>
+              <CardTitle className="text-3xl">{isAdmin ? apiKeys.length : 'Admin only'}</CardTitle>
             </CardHeader>
           </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>MFA Status</CardDescription>
               <CardTitle className="text-3xl">
-                {mfaDevices.length > 0 ? (
+                {mfaDevices.some(device => device.is_verified) ? (
                   <span className="flex items-center gap-2 text-green-600">
                     <Shield className="h-6 w-6" />
                     Enabled
@@ -274,24 +272,25 @@ export default function SecurityPage() {
           <Card>
             <CardHeader className="pb-2">
               <CardDescription>Audit Events (30d)</CardDescription>
-              <CardTitle className="text-3xl">{auditLogs.length}</CardTitle>
+              <CardTitle className="text-3xl">{isAdmin ? auditLogs.length : 'Admin only'}</CardTitle>
             </CardHeader>
           </Card>
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="api-keys">
-          <TabsList>
-            <TabsTrigger value="api-keys">API Keys</TabsTrigger>
+        {loadError && <div role="alert" className="rounded-lg border border-destructive p-4 text-sm">{loadError} <Button variant="outline" size="sm" onClick={() => void loadData()}>Retry</Button></div>}
+        <Tabs defaultValue="mfa">
+          <TabsList className="h-auto flex-wrap justify-start">
+            {isAdmin && <TabsTrigger value="api-keys">API Keys</TabsTrigger>}
             <TabsTrigger value="mfa">Multi-Factor Auth</TabsTrigger>
             <TabsTrigger value="sessions">Sessions</TabsTrigger>
-            <TabsTrigger value="audit">Audit Log</TabsTrigger>
+            {isAdmin && <TabsTrigger value="audit">Audit Log</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="api-keys" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>API Keys</CardTitle>
                     <CardDescription>
@@ -508,7 +507,7 @@ export default function SecurityPage() {
           <TabsContent value="mfa" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Multi-Factor Authentication</CardTitle>
                     <CardDescription>
@@ -599,7 +598,7 @@ export default function SecurityPage() {
           <TabsContent value="sessions" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Active Sessions</CardTitle>
                     <CardDescription>

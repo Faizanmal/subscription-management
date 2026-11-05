@@ -7,69 +7,30 @@ from backups.models import BackupSchedule, Backup, DataExport, ImportJob
 
 
 class BackupScheduleSerializer(serializers.ModelSerializer):
-    """Backup schedule serializer"""
-    
-    frequency_display = serializers.CharField(source='get_frequency_display', read_only=True)
-    retention_days_display = serializers.SerializerMethodField()
-    
+    frequency = serializers.ChoiceField(choices=BackupSchedule.Frequency.choices)
+    last_run = serializers.DateTimeField(source='last_backup', read_only=True)
+    next_run = serializers.DateTimeField(source='next_backup', read_only=True)
     class Meta:
         model = BackupSchedule
-        fields = [
-            'id', 'organization', 'name', 'frequency', 'frequency_display',
-            'time_of_day', 'day_of_week', 'day_of_month',
-            'retention_days', 'retention_days_display',
-            'include_attachments', 'storage_location', 'encryption_key_id',
-            'is_active', 'last_run_at', 'next_run_at',
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ['organization', 'last_run_at', 'next_run_at', 'created_at', 'updated_at']
-    
-    def get_retention_days_display(self, obj):
-        if obj.retention_days == 0:
-            return 'Forever'
-        elif obj.retention_days == 1:
-            return '1 day'
-        return f'{obj.retention_days} days'
-
+        fields = ['id', 'name', 'frequency', 'retention_days', 'is_active', 'last_run', 'next_run', 'created_at']
+    def validate_retention_days(self, value):
+        if value < 1 or value > 3650:
+            raise serializers.ValidationError('Choose a retention period from 1 to 3650 days.')
+        return value
+    def create(self, validated_data):
+        from datetime import time
+        return super().create({**validated_data, 'schedule_time': time(2), 'schedule_day_of_week': 0, 'schedule_day_of_month': 1, 'storage_location': 'local'})
 
 class BackupSerializer(serializers.ModelSerializer):
-    """Backup serializer"""
-    
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-    size_display = serializers.SerializerMethodField()
-    schedule_name = serializers.SerializerMethodField()
-    
+    type = serializers.CharField(source='triggered_by', read_only=True)
+    file_name = serializers.CharField(source='name', read_only=True)
+    schedule_id = serializers.UUIDField(read_only=True)
     class Meta:
         model = Backup
-        fields = [
-            'id', 'schedule', 'schedule_name', 'status', 'status_display',
-            'started_at', 'completed_at', 'file_path', 'file_size',
-            'size_display', 'checksum', 'is_encrypted', 'metadata',
-            'error_message', 'created_at'
-        ]
-        read_only_fields = ['__all__']
-    
-    def get_size_display(self, obj):
-        if not obj.file_size:
-            return 'Unknown'
-        
-        size = obj.file_size
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size < 1024:
-                return f'{size:.1f} {unit}'
-            size /= 1024
-        return f'{size:.1f} PB'
-    
-    def get_schedule_name(self, obj):
-        if obj.schedule:
-            return obj.schedule.name
-        return 'Manual backup'
-
+        fields = ['id', 'schedule_id', 'type', 'file_name', 'status', 'file_size', 'checksum', 'started_at', 'completed_at', 'error_message', 'created_at', 'restore_status', 'restore_error']
+        read_only_fields = fields
 
 class BackupCreateSerializer(serializers.Serializer):
-    """Serializer for creating manual backup"""
-    
-    include_attachments = serializers.BooleanField(default=True)
     description = serializers.CharField(required=False, allow_blank=True)
 
 
@@ -188,30 +149,26 @@ class DataExportCreateSerializer(serializers.Serializer):
 
 
 class ImportJobSerializer(serializers.ModelSerializer):
-    """Import job serializer"""
-    
     status_display = serializers.CharField(source='get_status_display', read_only=True)
-    
+    filename = serializers.CharField(source='source_file_name', read_only=True)
+    error_count = serializers.IntegerField(source='failed_rows', read_only=True)
+    errors = serializers.JSONField(source='processing_errors', read_only=True)
+    field_mapping = serializers.JSONField(source='column_mapping', read_only=True)
     class Meta:
         model = ImportJob
-        fields = [
-            'id', 'organization', 'uploaded_by', 'file_name', 'file_size',
-            'import_type', 'status', 'status_display',
-            'total_rows', 'processed_rows', 'success_count', 'error_count',
-            'errors', 'mapping', 'started_at', 'completed_at', 'created_at'
-        ]
-        read_only_fields = [
-            'organization', 'uploaded_by', 'status', 'total_rows', 'processed_rows',
-            'success_count', 'error_count', 'errors', 'started_at', 'completed_at', 'created_at'
-        ]
-
+        fields = ['id', 'import_type', 'filename', 'status', 'status_display', 'total_rows', 'processed_rows', 'successful_rows', 'failed_rows', 'error_count', 'errors', 'field_mapping', 'started_at', 'completed_at', 'created_at']
+        read_only_fields = fields
 
 class ImportJobCreateSerializer(serializers.Serializer):
-    """Serializer for creating import job"""
-    
     file = serializers.FileField()
-    import_type = serializers.ChoiceField(choices=ImportJob.ImportType.choices)
-    mapping = serializers.DictField(required=False)
+    # Other import types are not exposed until they have safe, tested processors.
+    import_type = serializers.ChoiceField(choices=[('subscriptions', 'Subscriptions')])
+    mapping = serializers.DictField(child=serializers.CharField(), required=False)
+    def validate_file(self, value):
+        import os
+        if os.path.splitext(value.name)[1].lower() not in ['.csv', '.json'] or value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError('Use a CSV or JSON file smaller than 5 MB.')
+        return value
 
 
 class ImportMappingSerializer(serializers.Serializer):

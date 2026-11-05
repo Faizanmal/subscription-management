@@ -44,7 +44,7 @@ app.conf.beat_schedule = {
     },
     'run-scheduled-backups': {
         'task': 'backups.tasks.run_scheduled_backups',
-        'schedule': crontab(minute=0, hour=2),
+        'schedule': crontab(minute='*'),
     },
     'cleanup-expired-invitations': {
         'task': 'users.tasks.cleanup_expired_invitations',

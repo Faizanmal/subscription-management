@@ -1,57 +1,12 @@
-'use client';
-
 import type { ReactNode } from 'react';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
+import { businessName, businessCountry } from '@/lib/public-content';
+import { PublicShell } from '@/components/public-shell';
 
-export function LegalShell({
-  title,
-  updated,
-  children,
-}: {
-  title: string;
-  updated: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="min-h-screen bg-white dark:bg-gray-950">
-      <nav className="border-b">
-        <div className="mx-auto max-w-3xl px-4 h-14 flex items-center justify-between">
-          <Link href="/" className="font-semibold tracking-tight">
-            Subscription Waste Manager
-          </Link>
-          <div className="flex gap-2">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/login">Sign in</Link>
-            </Button>
-            <Button size="sm" asChild>
-              <Link href="/register">Start free</Link>
-            </Button>
-          </div>
-        </div>
-      </nav>
-      <main className="mx-auto max-w-3xl px-4 py-12 prose prose-gray dark:prose-invert">
-        <p className="text-sm text-gray-500 not-prose mb-2">Last updated {updated}</p>
-        <h1 className="text-3xl font-bold tracking-tight mb-8 not-prose">{title}</h1>
-        {children}
-      </main>
-      <footer className="border-t py-8 text-center text-sm text-gray-500">
-        <Link href="/privacy" className="hover:underline mx-2">
-          Privacy
-        </Link>
-        <Link href="/terms" className="hover:underline mx-2">
-          Terms
-        </Link>
-        <Link href="/security" className="hover:underline mx-2">
-          Security
-        </Link>
-        <Link href="/data" className="hover:underline mx-2">
-          Your data
-        </Link>
-        <Link href="/support" className="hover:underline mx-2">
-          Support
-        </Link>
-      </footer>
-    </div>
-  );
+export function LegalShell({ title, updated, children }: { title: string; updated: string; children: ReactNode }) {
+  return <PublicShell><article className="mx-auto max-w-3xl px-4 py-12 sm:px-6 sm:py-16">
+    <p className="mb-3 text-sm text-muted-foreground">Last updated {updated}</p>
+    <h1 className="mb-8 text-3xl font-bold tracking-tight sm:text-4xl">{title}</h1>
+    {(!businessName || !businessCountry) && <p className="mb-8 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">Preview policy: business identity, jurisdiction, and final legal review are pending. This site is being prepared for launch.</p>}
+    <div className="policy-content">{children}</div>
+  </article></PublicShell>;
 }

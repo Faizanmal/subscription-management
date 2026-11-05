@@ -43,6 +43,28 @@ export const apiClient: AxiosInstance = axios.create({
   timeout: 30000,
 });
 
+type RefreshedTokens = { access: string; refresh: string };
+let refreshInFlight: Promise<RefreshedTokens> | null = null;
+let authRefreshListener: ((access: string, refresh: string) => void) | undefined;
+
+export function setAuthRefreshListener(listener: (access: string, refresh: string) => void) {
+  authRefreshListener = listener;
+}
+
+function refreshTokens(refresh: string): Promise<RefreshedTokens> {
+  if (!refreshInFlight) {
+    refreshInFlight = axios.post<RefreshedTokens>(`${API_BASE_URL}/auth/token/refresh/`, { refresh })
+      .then(({ data }) => {
+        const nextRefresh = data.refresh || refresh;
+        persistAuthTokens(data.access, nextRefresh);
+        authRefreshListener?.(data.access, nextRefresh);
+        return { access: data.access, refresh: nextRefresh };
+      })
+      .finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
 // Request interceptor to add auth token
 apiClient.interceptors.request.use(
   (config) => {
@@ -70,6 +92,20 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
 
+    const responseData = error.response?.data as { error?: { details?: { code?: string } }; code?: string } | undefined;
+    if (error.response?.status === 403 && (responseData?.error?.details?.code === 'email_verification_required' || responseData?.code === 'email_verification_required')) {
+      // Axios runs outside React; discard the stale protected view.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      if (typeof window !== 'undefined' && window.location.pathname !== '/verify-email') window.location.assign(`${window.location.origin}/verify-email`);
+      return Promise.reject(error);
+    }
+    if (error.response?.status === 403 && (responseData?.error?.details?.code === 'agreements_required' || responseData?.code === 'agreements_required')) {
+      // Axios runs outside React; a full navigation also clears stale protected-page state.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      if (typeof window !== 'undefined' && window.location.pathname !== '/agreements') window.location.assign(`${window.location.origin}/agreements`);
+      return Promise.reject(error);
+    }
+
     // Handle rate limiting
     if (error.response?.status === 429) {
       const retryAfter = (error.response.data as Record<string, unknown>)?.retry_after || 60;
@@ -82,7 +118,7 @@ apiClient.interceptors.response.use(
     }
 
     // Handle 401 - attempt token refresh
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry && !originalRequest.url?.includes('/auth/token/')) {
       originalRequest._retry = true;
 
       try {
@@ -92,15 +128,7 @@ apiClient.interceptors.response.use(
           const refreshToken = parsed?.state?.refreshToken;
           
           if (refreshToken) {
-            const response = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, {
-              refresh: refreshToken,
-            });
-
-            const { access } = response.data;
-
-            // Update access token in storage
-            parsed.state.accessToken = access;
-            localStorage.setItem('swm-auth', JSON.stringify(parsed));
+            const { access } = await refreshTokens(refreshToken);
 
             // Retry original request
             if (originalRequest.headers) {
@@ -129,7 +157,7 @@ apiClient.interceptors.response.use(
 
 interface RequestOptions {
   params?: Record<string, unknown>;
-  headers?: Record<string, string>;
+  headers?: Record<string, string | undefined>;
 }
 
 // ==================== Generic API Methods ====================

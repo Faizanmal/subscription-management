@@ -1,413 +1,92 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { useEffect, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { Bell, Building2, CalendarClock, ChartNoAxesCombined, ChevronLeft, ChevronRight, CreditCard, Download, LayoutDashboard, LifeBuoy, Lightbulb, Loader2, LogOut, Menu, Plus, Plug, Search, Settings, Shield, User, Users, Workflow } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import {
-  LayoutDashboard,
-  CreditCard,
-  TrendingUp,
-  Lightbulb,
-  Bell,
-  Settings,
-  Users,
-  Plug,
-  Shield,
-  Download,
-  Workflow,
-  ChevronLeft,
-  ChevronRight,
-  Search,
-  LogOut,
-  User,
-  Building2,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { useEffect, useState, FormEvent, ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
 import { useAuthStore, useNotificationsStore, useOrganizationStore } from '@/lib/stores';
+import { Brand } from '@/components/brand';
+import { ThemeControl } from '@/components/theme-control';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 
-interface NavItem {
-  title: string;
-  href: string;
-  icon: ReactNode;
-  badge?: string | number;
-  children?: { title: string; href: string }[];
-}
-
-const mainNavItems: NavItem[] = [
-  {
-    title: 'Dashboard',
-    href: '/dashboard',
-    icon: <LayoutDashboard className="h-5 w-5" />,
-  },
-  {
-    title: 'Subscriptions',
-    href: '/subscriptions',
-    icon: <CreditCard className="h-5 w-5" />,
-  },
-  {
-    title: 'Usage & Analytics',
-    href: '/analytics',
-    icon: <TrendingUp className="h-5 w-5" />,
-  },
-  {
-    title: 'Recommendations',
-    href: '/recommendations',
-    icon: <Lightbulb className="h-5 w-5" />,
-  },
-  {
-    title: 'Workflows',
-    href: '/workflows',
-    icon: <Workflow className="h-5 w-5" />,
-  },
-  {
-    title: 'Alerts',
-    href: '/alerts',
-    icon: <Bell className="h-5 w-5" />,
-  },
+const mainLinks = [
+  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'Subscriptions', href: '/subscriptions', icon: CreditCard },
+  { label: 'Usage & analytics', href: '/analytics', icon: ChartNoAxesCombined },
+  { label: 'Recommendations', href: '/recommendations', icon: Lightbulb },
+  { label: 'Workflows', href: '/workflows', icon: Workflow },
+  { label: 'Alerts', href: '/alerts', icon: CalendarClock },
 ];
-
-const settingsNavItems: NavItem[] = [
-  {
-    title: 'Integrations',
-    href: '/settings/integrations',
-    icon: <Plug className="h-5 w-5" />,
-  },
-  {
-    title: 'Team',
-    href: '/settings/team',
-    icon: <Users className="h-5 w-5" />,
-  },
-  {
-    title: 'Security',
-    href: '/settings/security',
-    icon: <Shield className="h-5 w-5" />,
-  },
-  {
-    title: 'Backups & Export',
-    href: '/settings/backups',
-    icon: <Download className="h-5 w-5" />,
-  },
-  {
-    title: 'Settings',
-    href: '/settings',
-    icon: <Settings className="h-5 w-5" />,
-  },
+const settingsLinks = [
+  { label: 'Integrations', href: '/settings/integrations', icon: Plug },
+  { label: 'Team', href: '/settings/team', icon: Users },
+  { label: 'Billing', href: '/settings/billing', icon: CreditCard },
+  { label: 'Security', href: '/settings/security', icon: Shield },
+  { label: 'Backups & export', href: '/settings/backups', icon: Download },
+  { label: 'Settings', href: '/settings', icon: Settings },
 ];
+const subscribe = () => () => {};
 
-interface DashboardLayoutProps {
-  children: ReactNode;
-}
-
-export function DashboardLayout({ children }: DashboardLayoutProps) {
+function Navigation({ collapsed = false, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
+  return <nav aria-label="Workspace navigation" className="flex-1 space-y-5 overflow-y-auto p-3">{[{ title: 'Workspace', links: mainLinks }, { title: 'Manage', links: settingsLinks }].map(group => <div key={group.title}>{!collapsed && <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{group.title}</p>}<ul className="space-y-1">{group.links.map(item => {
+    const active = item.href === '/settings' ? pathname === item.href : pathname === item.href || pathname.startsWith(item.href + '/');
+    return <li key={item.href}><Link href={item.href} onClick={onNavigate} aria-current={active ? 'page' : undefined} title={collapsed ? item.label : undefined} aria-label={collapsed ? item.label : undefined} className={cn('flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors', collapsed && 'justify-center px-0', active ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}><item.icon className="h-4.5 w-4.5 shrink-0" aria-hidden="true" />{!collapsed && item.label}</Link></li>;
+  })}</ul></div>)}<div className="border-t pt-3"><Link href="/help" onClick={onNavigate} title={collapsed ? 'Help & support' : undefined} aria-label={collapsed ? 'Help & support' : undefined} className={cn('flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent', collapsed && 'justify-center px-0')}><LifeBuoy className="h-4.5 w-4.5 shrink-0" aria-hidden="true" />{!collapsed && 'Help & support'}</Link></div></nav>;
+}
+
+export function DashboardLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const [isCollapsed, setIsCollapsed] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const { user, logout } = useAuthStore();
+  const pathname = usePathname();
+  const ready = useSyncExternalStore(subscribe, () => true, () => false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const { user, isAuthenticated, logout } = useAuthStore();
   const { organization, fetchOrganization } = useOrganizationStore();
-  const { notifications, unreadCount, fetchNotifications, markAllAsRead, markAsRead } =
-    useNotificationsStore();
+  const { notifications, unreadCount, fetchNotifications, markAllAsRead, markAsRead } = useNotificationsStore();
 
   useEffect(() => {
-    void fetchOrganization();
-    void fetchNotifications();
-  }, [fetchOrganization, fetchNotifications]);
+    if (!ready) return;
+    if (!isAuthenticated) { router.replace('/login'); return; }
+    if (user?.email_verification_required) { router.replace('/verify-email'); return; }
+    if (user?.agreements_required) { router.replace('/agreements'); return; }
+    if (user && !user.organization_id) { router.replace('/onboarding'); return; }
+    if (user) { void fetchOrganization(); void fetchNotifications(); }
+  }, [ready, isAuthenticated, user, router, fetchOrganization, fetchNotifications]);
 
-  const handleLogout = async () => {
-    await logout();
-    router.replace('/login');
-  };
+  async function signOut() { await logout(); router.replace('/login'); }
+  function search(event: FormEvent) { event.preventDefault(); router.push(query.trim() ? `/subscriptions?search=${encodeURIComponent(query.trim())}` : '/subscriptions'); }
+  if (!ready || !isAuthenticated || !user || user.email_verification_required || user.agreements_required || !user.organization_id) return <div className="flex min-h-screen items-center justify-center gap-3 text-muted-foreground" role="status"><Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />Opening your workspace…</div>;
 
-  const handleSearch = (e: FormEvent) => {
-    e.preventDefault();
-    const query = searchQuery.trim();
-    if (query) {
-      router.push(`/subscriptions?search=${encodeURIComponent(query)}`);
-    } else {
-      router.push('/subscriptions');
-    }
-  };
+  const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email;
+  const initials = name.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
+  const title = [...mainLinks, ...settingsLinks].find(item => pathname === item.href || (item.href !== '/settings' && pathname.startsWith(item.href + '/')))?.label || 'Workspace';
+  return <div className="flex h-dvh min-h-0 overflow-hidden bg-muted/30">
+    <a className="skip-link" href="#main-content">Skip to workspace content</a>
+    <aside aria-label="Workspace sidebar" className={cn('hidden shrink-0 flex-col border-r bg-card transition-[width] lg:flex', collapsed ? 'w-20' : 'w-64')}>
+      <div className="flex h-20 shrink-0 items-center justify-between gap-2 border-b px-4">{!collapsed && <Brand href="/dashboard" />}<Button type="button" variant="ghost" size="icon" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)} className={collapsed ? 'mx-auto' : 'shrink-0'}>{collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronLeft aria-hidden="true" />}</Button></div>
+      {!collapsed && <div className="flex items-center gap-3 border-b px-5 py-4"><Building2 className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" /><div className="min-w-0"><p className="truncate text-sm font-semibold">{organization?.name || user.organization_name || 'Your organization'}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{organization?.is_on_trial ? 'Pro trial' : organization?.plan || 'Starter'} plan</p></div></div>}
+      <Navigation collapsed={collapsed} />
+      <div className="shrink-0 border-t p-3"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" className={cn('h-auto w-full justify-start gap-3 px-2 py-2', collapsed && 'justify-center')} aria-label="Open account menu"><Avatar className="h-9 w-9 shrink-0"><AvatarImage src={typeof user.avatar === 'string' ? user.avatar : undefined} alt="" /><AvatarFallback>{initials}</AvatarFallback></Avatar>{!collapsed && <span className="min-w-0 text-left"><span className="block truncate text-sm font-medium">{name}</span><span className="block text-xs capitalize text-muted-foreground">{user.role.replaceAll('_', ' ')}</span></span>}</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-56"><DropdownMenuLabel>My account</DropdownMenuLabel><DropdownMenuSeparator /><DropdownMenuItem asChild><Link href="/settings/profile"><User className="mr-2 h-4 w-4" />Profile</Link></DropdownMenuItem><DropdownMenuItem asChild><Link href="/settings/billing"><CreditCard className="mr-2 h-4 w-4" />Billing</Link></DropdownMenuItem><DropdownMenuItem asChild><Link href="/contact"><LifeBuoy className="mr-2 h-4 w-4" />Support</Link></DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={signOut}><LogOut className="mr-2 h-4 w-4" />Sign out</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>
+    </aside>
 
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map((n) => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
-
-  return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Sidebar */}
-      <aside
-        className={cn(
-          'flex flex-col border-r bg-white dark:bg-gray-800 transition-all duration-300',
-          isCollapsed ? 'w-16' : 'w-64'
-        )}
-      >
-        {/* Logo */}
-        <div className="flex h-16 items-center justify-between border-b px-4">
-          {!isCollapsed && (
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white font-bold">
-                S
-              </div>
-              <span className="font-semibold text-lg">SWM</span>
-            </Link>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="ml-auto"
-          >
-            {isCollapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
-          </Button>
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <header className="shrink-0 border-b bg-card px-4 py-3 sm:px-6"><div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}><SheetTrigger asChild><Button variant="ghost" size="icon" aria-label="Open workspace navigation" className="lg:hidden"><Menu aria-hidden="true" /></Button></SheetTrigger><SheetContent side="left" className="flex w-[min(90vw,20rem)] flex-col p-0"><SheetHeader className="border-b px-5 py-6 text-left"><SheetTitle>Workspace navigation</SheetTitle><SheetDescription>{organization?.name || 'Your organization'}</SheetDescription></SheetHeader><Navigation onNavigate={() => setMobileOpen(false)} /><div className="border-t p-4"><p className="mb-3 truncate text-sm font-medium">{name}</p><Button variant="outline" className="w-full" onClick={signOut}><LogOut className="mr-2 h-4 w-4" />Sign out</Button></div></SheetContent></Sheet>
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold lg:hidden">{title}</p>
+        <form onSubmit={search} role="search" className="order-last w-full lg:order-none lg:w-auto lg:min-w-48 lg:max-w-md lg:flex-1"><label htmlFor="workspace-search" className="sr-only">Search subscriptions</label><div className="relative"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" aria-hidden="true" /><Input id="workspace-search" type="search" placeholder="Search subscriptions…" value={query} onChange={event => setQuery(event.target.value)} className="bg-muted/30 pl-9" /></div></form>
+        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2"><ThemeControl /><Button asChild size="sm" className="h-10 px-3"><Link href="/subscriptions/new" aria-label="Add subscription"><Plus className="h-4 w-4" aria-hidden="true" /><span className="hidden sm:inline">Add subscription</span></Link></Button>
+          <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="relative" aria-label={unreadCount ? `Notifications, ${unreadCount} unread` : 'Notifications'}><Bell aria-hidden="true" />{unreadCount > 0 && <span aria-hidden="true" className="absolute right-0 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">{unreadCount > 9 ? '9+' : unreadCount}</span>}</Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-[min(90vw,22rem)]"><DropdownMenuLabel className="flex items-center justify-between gap-3">Notifications<Button size="sm" variant="ghost" onClick={() => void markAllAsRead()} disabled={!unreadCount}>Mark read</Button></DropdownMenuLabel><DropdownMenuSeparator /><div className="max-h-72 overflow-y-auto">{!notifications.length ? <div className="p-6 text-center"><p className="text-sm font-medium">You’re all caught up.</p><p className="mt-2 text-xs leading-5 text-muted-foreground">New workspace notifications will appear here.</p></div> : notifications.slice(0, 8).map(notification => <DropdownMenuItem key={notification.id} className="flex flex-col items-start gap-1 whitespace-normal py-3" onClick={() => { if (!notification.is_read) void markAsRead(notification.id); const href = notification.action_url || notification.link || '/alerts'; router.push(href.startsWith('/') && !href.startsWith('//') ? href : '/alerts'); }}><span className={notification.is_read ? 'text-sm' : 'text-sm font-semibold'}>{notification.title}</span><span className="line-clamp-2 text-xs leading-5 text-muted-foreground">{notification.message}</span>{!notification.is_read && <Badge variant="secondary" className="mt-1 text-[10px]">Unread</Badge>}</DropdownMenuItem>)}</div><DropdownMenuSeparator /><DropdownMenuItem asChild><Link href="/settings/notifications">Notification preferences</Link></DropdownMenuItem></DropdownMenuContent></DropdownMenu>
         </div>
-
-        {/* Organization Selector */}
-        {!isCollapsed && organization && (
-          <div className="border-b p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
-                <Building2 className="h-5 w-5 text-gray-600 dark:text-gray-300" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm truncate">{organization.name}</p>
-                <p className="text-xs text-gray-500 capitalize">{organization.plan} Plan</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-1">
-            {mainNavItems.map((item) => {
-              const isActive =
-                pathname === item.href || pathname.startsWith(item.href + '/');
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
-                      : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
-                  )}
-                  title={isCollapsed ? item.title : undefined}
-                >
-                  {item.icon}
-                  {!isCollapsed && (
-                    <>
-                      <span className="flex-1">{item.title}</span>
-                      {item.title === 'Alerts' && unreadCount > 0 && (
-                        <Badge variant="destructive" className="h-5 min-w-5 justify-center">
-                          {unreadCount}
-                        </Badge>
-                      )}
-                    </>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-
-          {!isCollapsed && (
-            <div className="mt-6 pt-6 border-t">
-              <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                Settings
-              </p>
-            </div>
-          )}
-
-          <div className="mt-2 space-y-1">
-            {settingsNavItems.map((item) => {
-              const isActive =
-                pathname === item.href || pathname.startsWith(item.href + '/');
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
-                      : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
-                  )}
-                  title={isCollapsed ? item.title : undefined}
-                >
-                  {item.icon}
-                  {!isCollapsed && <span>{item.title}</span>}
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
-
-        {/* User Menu */}
-        <div className="border-t p-4">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                className={cn(
-                  'w-full justify-start gap-3 px-2',
-                  isCollapsed && 'justify-center'
-                )}
-              >
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={user?.avatar} />
-                  <AvatarFallback>
-                    {user ? getInitials(`${user.first_name} ${user.last_name}`) : '??'}
-                  </AvatarFallback>
-                </Avatar>
-                {!isCollapsed && (
-                  <div className="flex-1 text-left">
-                    <p className="text-sm font-medium">
-                      {user?.first_name} {user?.last_name}
-                    </p>
-                    <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
-                  </div>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/settings/profile">
-                  <User className="mr-2 h-4 w-4" />
-                  Profile
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/settings">
-                  <Settings className="mr-2 h-4 w-4" />
-                  Settings
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleLogout} className="text-red-600">
-                <LogOut className="mr-2 h-4 w-4" />
-                Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Header */}
-        <header className="h-16 border-b bg-white dark:bg-gray-800 flex items-center justify-between px-6">
-          {/* Search */}
-          <form onSubmit={handleSearch} className="flex-1 max-w-md">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Search subscriptions, vendors..."
-                className="pl-10 bg-gray-50 dark:bg-gray-700 border-0"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-          </form>
-
-          {/* Quick Actions */}
-          <div className="flex items-center gap-4">
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/subscriptions/new">+ Add Subscription</Link>
-            </Button>
-            
-            {/* Notifications */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="relative">
-                  <Bell className="h-5 w-5" />
-                  {unreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-[10px] font-medium text-white flex items-center justify-center">
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </span>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel className="flex items-center justify-between">
-                  Notifications
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs"
-                    onClick={() => {
-                      void markAllAsRead();
-                    }}
-                  >
-                    Mark all read
-                  </Button>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <div className="max-h-64 overflow-y-auto">
-                  {notifications.length === 0 ? (
-                    <p className="p-4 text-sm text-gray-500 text-center">
-                      No new notifications
-                    </p>
-                  ) : (
-                    notifications.slice(0, 8).map((notification) => (
-                      <DropdownMenuItem
-                        key={notification.id}
-                        className="flex flex-col items-start gap-1 whitespace-normal"
-                        onClick={() => {
-                          if (!notification.is_read) {
-                            void markAsRead(notification.id);
-                          }
-                          const href = notification.action_url || notification.link;
-                          if (href) {
-                            window.location.href = href;
-                          }
-                        }}
-                      >
-                        <span className={notification.is_read ? 'text-sm' : 'text-sm font-medium'}>
-                          {notification.title}
-                        </span>
-                        <span className="text-xs text-gray-500 line-clamp-2">
-                          {notification.message}
-                        </span>
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild className="justify-center">
-                  <Link href="/settings/notifications">Notification settings</Link>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </header>
-
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
-      </div>
+      </div></header>
+      <main id="main-content" tabIndex={-1} className="app-content min-w-0 flex-1 overflow-auto overscroll-contain p-4 sm:p-6 xl:p-8"><div className="mx-auto w-full max-w-[1600px]">{children}</div><footer className="mx-auto mt-12 flex max-w-[1600px] flex-wrap gap-x-5 gap-y-2 border-t pt-5 text-xs text-muted-foreground"><Link href="/help" className="hover:text-primary">Help</Link><Link href="/contact" className="hover:text-primary">Contact support</Link><Link href="/privacy" className="hover:text-primary">Privacy</Link><Link href="/terms" className="hover:text-primary">Terms</Link></footer></main>
     </div>
-  );
+  </div>;
 }

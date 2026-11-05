@@ -8,6 +8,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from api.health import HealthView
+from users.social_views import social_complete
 
 urlpatterns = [
     # Admin
@@ -24,6 +25,7 @@ urlpatterns = [
     path('api/v1/auth/', include('users.urls')),
     
     # Social Auth
+    path('social/finish/', social_complete, name='social-complete'),
     path('social/', include('social_django.urls', namespace='social')),
     
     # API Documentation

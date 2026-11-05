@@ -28,7 +28,7 @@ def run_backup(self, backup_id):
         
         try:
             # Get organization
-            org = backup.schedule.organization
+            org = backup.organization
             
             # Create backup directory
             backup_dir = os.path.join(settings.BACKUP_ROOT, str(org.id))
@@ -36,11 +36,11 @@ def run_backup(self, backup_id):
             
             # Create backup filename
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"backup_{org.slug}_{timestamp}.zip"
+            filename = f"backup_{org.slug}_{timestamp}_{backup.id}.zip"
             filepath = os.path.join(backup_dir, filename)
             
             # Collect data
-            data = collect_backup_data(org, backup.metadata or {})
+            data = collect_backup_data(org, {})
             
             # Create zip file
             with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -68,8 +68,9 @@ def run_backup(self, backup_id):
             backup.save()
             
             # Update schedule
-            backup.schedule.last_run_at = timezone.now()
-            backup.schedule.save()
+            if backup.schedule:
+                backup.schedule.last_backup = timezone.now()
+                backup.schedule.save(update_fields=['last_backup'])
             
             logger.info(f"Backup completed: {filepath}")
             
@@ -100,7 +101,7 @@ def collect_backup_data(organization, options):
     from integrations.models import Integration
     
     data = {
-        'users': list(User.objects.filter(organization=organization).values()),
+        'users': list(User.objects.filter(organization=organization).values('id', 'email', 'first_name', 'last_name', 'date_joined')),
         'departments': list(Department.objects.filter(organization=organization).values()),
         'teams': list(Team.objects.filter(organization=organization).values()),
         'roles': list(Role.objects.filter(organization=organization).values()),
@@ -185,89 +186,71 @@ def cleanup_old_backups(schedule_id):
         logger.error(f"Backup schedule {schedule_id} not found")
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(bind=True, max_retries=0)
 def restore_backup(self, backup_id, options=None):
-    """Restore from a backup"""
     from backups.models import Backup
-    
-    options = options or {}
-    
+    backup = Backup.objects.get(pk=backup_id)
+    backup.restore_status = 'running'
+    backup.save(update_fields=['restore_status'])
     try:
-        backup = Backup.objects.get(id=backup_id)
-        
-        if backup.status != 'completed':
-            raise ValueError("Cannot restore from incomplete backup")
-        
-        if not backup.file_path or not os.path.exists(backup.file_path):
-            raise ValueError("Backup file not found")
-        
-        # Extract and parse backup
-        with zipfile.ZipFile(backup.file_path, 'r') as zf:
-            data = json.loads(zf.read('data.json'))
-            metadata = json.loads(zf.read('metadata.json'))
-        
-        # Verify organization matches
-        org = backup.schedule.organization
-        if str(org.id) != metadata.get('organization'):
-            raise ValueError("Backup organization mismatch")
-        
-        # Restore data
-        restore_data(org, data, options)
-        
-        logger.info(f"Restore completed from backup {backup_id}")
-        
+        if backup.status != 'completed' or not backup.file_path:
+            raise ValueError('Snapshot is incomplete')
+        with open(backup.file_path, 'rb') as stream:
+            if hashlib.sha256(stream.read()).hexdigest() != backup.checksum:
+                raise ValueError('Snapshot checksum does not match')
+        with zipfile.ZipFile(backup.file_path) as archive:
+            metadata = json.loads(archive.read('metadata.json'))
+            data = json.loads(archive.read('data.json'))
+        if str(backup.organization_id) != metadata.get('organization'):
+            raise ValueError('Snapshot organization mismatch')
+        restore_data(backup.organization, data, options or {})
+        backup.restore_status = 'completed'
+        backup.restore_error = ''
+        backup.save(update_fields=['restore_status', 'restore_error'])
         return {'success': True}
-        
-    except Backup.DoesNotExist:
-        logger.error(f"Backup {backup_id} not found")
-        return {'success': False, 'error': 'Backup not found'}
-    except Exception as e:
-        logger.error(f"Restore failed: {e}")
-        self.retry(countdown=60)
+    except Exception:
+        logger.warning('Workspace snapshot restore failed')
+        backup.restore_status = 'failed'
+        backup.restore_error = 'Restore failed. Verify the snapshot and its related records before retrying.'
+        backup.save(update_fields=['restore_status', 'restore_error'])
+        return {'success': False}
 
 
 def restore_data(organization, data, options):
-    """Restore organization data from backup"""
-    from users.models import Department, Team, Role
+    """Atomic merge of supported entities with strict organization boundaries."""
+    from django.db import transaction
+    from users.models import Organization, Department, Team, Role
     from services.models import Subscription, Recommendation
-    
-    # Restore in order of dependencies
-    restore_entities = options.get('entities', ['all'])
-    
-    if 'all' in restore_entities or 'departments' in restore_entities:
-        for dept_data in data.get('departments', []):
-            Department.objects.update_or_create(
-                id=dept_data['id'],
-                defaults={k: v for k, v in dept_data.items() if k != 'id'}
-            )
-    
-    if 'all' in restore_entities or 'teams' in restore_entities:
-        for team_data in data.get('teams', []):
-            Team.objects.update_or_create(
-                id=team_data['id'],
-                defaults={k: v for k, v in team_data.items() if k != 'id'}
-            )
-    
-    if 'all' in restore_entities or 'roles' in restore_entities:
-        for role_data in data.get('roles', []):
-            Role.objects.update_or_create(
-                id=role_data['id'],
-                defaults={k: v for k, v in role_data.items() if k != 'id'}
-            )
-    
-    if 'all' in restore_entities or 'subscriptions' in restore_entities:
-        for sub_data in data.get('subscriptions', []):
-            Subscription.objects.update_or_create(
-                id=sub_data['id'],
-                defaults={k: v for k, v in sub_data.items() if k != 'id'}
-            )
-    
-    if 'all' in restore_entities or 'recommendations' in restore_entities:
-        for rec_data in data.get('recommendations', []):
-            Recommendation.objects.update_or_create(
-                id=rec_data['id'],
-                defaults={k: v for k, v in rec_data.items() if k != 'id'}
-            )
+    from users.plans import require_subscription_slot
+    selected = options.get('entities', ['all'])
+    with transaction.atomic():
+        organization = Organization.objects.select_for_update().get(pk=organization.pk)
+        for key, model in [('departments', Department), ('teams', Team), ('roles', Role), ('subscriptions', Subscription), ('recommendations', Recommendation)]:
+            if 'all' not in selected and key not in selected:
+                continue
+            for row in data.get(key, []):
+                if 'organization_id' in row and str(row['organization_id']) != str(organization.pk):
+                    raise ValueError('Snapshot contains foreign records')
+                existing = model.objects.filter(pk=row['id']).first()
+                if existing and ((hasattr(existing, 'organization_id') and existing.organization_id != organization.pk) or (hasattr(existing, 'subscription') and existing.subscription.organization_id != organization.pk)):
+                    raise ValueError('Foreign record conflict')
+                values = {}
+                for field in model._meta.concrete_fields:
+                    if field.primary_key or field.name == 'organization' or field.attname not in row:
+                        continue
+                    value = row[field.attname]
+                    if field.is_relation and value:
+                        related = field.related_model.objects.filter(pk=value).first()
+                        if related and hasattr(related, 'organization_id') and related.organization_id != organization.pk:
+                            raise ValueError('Foreign relationship in snapshot')
+                        if related is None and field.null:
+                            value = None
+                    values[field.attname] = value
+                if any(field.name == 'organization' for field in model._meta.fields):
+                    values['organization'] = organization
+                if model == Subscription and not existing and require_subscription_slot(organization):
+                    raise ValueError('Subscription limit reached')
+                model.objects.update_or_create(pk=row['id'], defaults=values)
 
 
 @shared_task(bind=True, max_retries=3)
@@ -296,18 +279,18 @@ def run_data_export(self, export_id):
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
             
             if export.format == DataExport.Format.JSON:
-                filename = f"export_{timestamp}.json"
+                filename = f"export_{timestamp}_{export.id}.json"
                 filepath = os.path.join(export_dir, filename)
                 with open(filepath, 'w') as f:
                     json.dump(data, f, indent=2, default=str)
             
             elif export.format == DataExport.Format.CSV:
-                filename = f"export_{timestamp}.zip"
+                filename = f"export_{timestamp}_{export.id}.zip"
                 filepath = os.path.join(export_dir, filename)
                 create_csv_export(data, filepath)
             
             elif export.format == DataExport.Format.EXCEL:
-                filename = f"export_{timestamp}.xlsx"
+                filename = f"export_{timestamp}_{export.id}.xlsx"
                 filepath = os.path.join(export_dir, filename)
                 create_excel_export(data, filepath)
             
@@ -396,7 +379,7 @@ def collect_export_data(organization, data_types, filters):
     
     if not data_types or 'users' in data_types:
         qs = User.objects.filter(organization=organization)
-        data['users'] = list(qs.values('id', 'email', 'first_name', 'last_name', 'is_active', 'created_at'))
+        data['users'] = list(qs.values('id', 'email', 'first_name', 'last_name', 'is_active', 'date_joined'))
     
     if not data_types or 'audit_logs' in data_types:
         qs = AuditLog.objects.filter(organization=organization)
@@ -481,7 +464,7 @@ def run_import_job(self, import_job_id):
         job.save()
         
         try:
-            temp_path = job.metadata.get('temp_path') if job.metadata else None
+            temp_path = job.source_file.path if job.source_file else None
             
             if not temp_path or not os.path.exists(temp_path):
                 raise ValueError("Import file not found")
@@ -493,13 +476,13 @@ def run_import_job(self, import_job_id):
             job.completed_at = timezone.now()
             job.total_rows = result['total']
             job.processed_rows = result['processed']
-            job.success_count = result['success']
-            job.error_count = result['errors']
-            job.errors = result.get('error_details', [])
+            job.successful_rows = result['success']
+            job.failed_rows = result['errors']
+            job.processing_errors = result.get('error_details', [])
             job.save()
             
             # Cleanup temp file
-            os.remove(temp_path)
+            job.source_file.delete(save=False)
             
             # Notify user
             if job.initiated_by_id:
@@ -517,7 +500,7 @@ def run_import_job(self, import_job_id):
             
         except Exception as e:
             job.status = 'failed'
-            job.error_message = str(e)
+            job.processing_errors = [{'error': 'Import failed. Check the file format and retry.'}]
             job.completed_at = timezone.now()
             job.save()
             raise
@@ -549,17 +532,15 @@ def process_import(job, filepath):
         'error_details': []
     }
     
+    if not isinstance(data, list) or len(data) > 5000 or any(not isinstance(row, dict) for row in data):
+        raise ValueError('Use an array of up to 5000 records')
     org = job.organization
-    mapping = job.mapping or {}
+    mapping = job.column_mapping or {}
     
     for i, row in enumerate(data):
         try:
             if job.import_type == 'subscriptions':
                 import_subscription(org, row, mapping)
-            elif job.import_type == 'users':
-                import_user(org, row, mapping)
-            elif job.import_type == 'usage':
-                import_usage(org, row, mapping)
             else:
                 raise ValueError(f"Unknown import type: {job.import_type}")
             
@@ -591,30 +572,36 @@ def parse_csv(filepath):
 
 
 def import_subscription(organization, row, mapping):
-    """Import a subscription row"""
+    """Validate each imported row under the same limits as manual entry."""
+    from decimal import Decimal
+    from django.db import transaction
+    from users.models import Organization
+    from users.plans import subscription_limit
     from services.models import Subscription, SoftwareVendor
-    
-    # Apply mapping
-    name = row.get(mapping.get('name', 'name'))
-    if not name:
-        raise ValueError("Name is required")
-    
-    vendor_name = row.get(mapping.get('vendor', 'vendor'))
-    vendor = None
-    if vendor_name:
-        vendor, _ = SoftwareVendor.objects.get_or_create(name=vendor_name)
-    
-    Subscription.objects.update_or_create(
-        organization=organization,
-        name=name,
-        defaults={
-            'vendor': vendor,
-            'status': row.get(mapping.get('status', 'status'), 'active'),
-            'billing_cycle': row.get(mapping.get('billing_cycle', 'billing_cycle'), 'monthly'),
-            'monthly_cost': float(row.get(mapping.get('monthly_cost', 'monthly_cost'), 0) or 0),
-            'total_licenses': int(row.get(mapping.get('total_licenses', 'total_licenses'), 0) or 0)
-        }
-    )
+    from services.serializers import SubscriptionCreateSerializer
+    with transaction.atomic():
+        organization = Organization.objects.select_for_update().get(pk=organization.pk)
+        name = (row.get(mapping.get('name', 'name')) or '').strip()
+        if not name:
+            raise ValueError('Name is required')
+        if Subscription.objects.filter(organization=organization, name=name).exists():
+            return  # Imports skip duplicate names; editing is an explicit UI action.
+        limit = subscription_limit(organization)
+        if limit is not None and organization.subscriptions.filter(status='active').count() >= limit:
+            raise ValueError('Subscription limit reached')
+        licenses = int(row.get(mapping.get('total_licenses', 'total_licenses')) or 1)
+        if licenses < 1:
+            raise ValueError('Licenses must be positive')
+        total = Decimal(str(row.get(mapping.get('monthly_cost', 'monthly_cost')) or 0))
+        if not total.is_finite() or total < 0:
+            raise ValueError('Cost must be a nonnegative number')
+        payload = {'name': name, 'status': row.get(mapping.get('status', 'status')) or 'active', 'billing_cycle': row.get(mapping.get('billing_cycle', 'billing_cycle')) or 'monthly', 'cost_per_unit': str((total / licenses).quantize(Decimal('0.01'))), 'total_licenses': licenses, 'currency': row.get(mapping.get('currency', 'currency')) or 'USD'}
+        from types import SimpleNamespace
+        serializer = SubscriptionCreateSerializer(data=payload, context={'request': SimpleNamespace(user=SimpleNamespace(organization=organization, organization_id=organization.pk))})
+        serializer.is_valid(raise_exception=True)
+        vendor_name = row.get(mapping.get('vendor', 'vendor'))
+        vendor = SoftwareVendor.objects.get_or_create(name=vendor_name)[0] if vendor_name else None
+        serializer.save(organization=organization, vendor=vendor)
 
 
 def import_user(organization, row, mapping):
@@ -625,6 +612,8 @@ def import_user(organization, row, mapping):
     if not email:
         raise ValueError("Email is required")
     
+    if User.objects.filter(email=email).exclude(organization=organization).exists():
+        raise ValueError('User belongs to another organization')
     User.objects.update_or_create(
         email=email,
         defaults={
@@ -716,13 +705,13 @@ def run_scheduled_backups():
     
     schedules = BackupSchedule.objects.filter(
         is_active=True,
-        next_run_at__lte=now
+        next_backup__lte=now
     )
     
     for schedule in schedules:
         # Create backup
         backup = Backup.objects.create(
-            schedule=schedule,
+            schedule=schedule, organization=schedule.organization, name=f'Workspace snapshot {timezone.now().isoformat()}',
             status='pending'
         )
         
@@ -730,55 +719,30 @@ def run_scheduled_backups():
         run_backup.delay(str(backup.id))
         
         # Calculate next run
-        schedule.next_run_at = calculate_next_run(schedule)
+        schedule.next_backup = calculate_next_run(schedule)
         schedule.save()
     
     logger.info(f"Triggered {schedules.count()} scheduled backups")
 
 
 def calculate_next_run(schedule):
-    """Calculate next run time for schedule"""
+    """UTC schedule, including short months and a future time later today."""
+    import calendar
     now = timezone.now()
-    
+    if schedule.frequency == 'hourly':
+        return now.replace(minute=0, second=0, microsecond=0) + timezone.timedelta(hours=1)
+    candidate = now.replace(hour=schedule.schedule_time.hour, minute=schedule.schedule_time.minute, second=0, microsecond=0)
     if schedule.frequency == 'daily':
-        next_run = now.replace(
-            hour=schedule.time_of_day.hour,
-            minute=schedule.time_of_day.minute,
-            second=0,
-            microsecond=0
-        )
-        if next_run <= now:
-            next_run += timezone.timedelta(days=1)
-    
-    elif schedule.frequency == 'weekly':
-        days_ahead = schedule.day_of_week - now.weekday()
-        if days_ahead <= 0:
-            days_ahead += 7
-        next_run = now + timezone.timedelta(days=days_ahead)
-        next_run = next_run.replace(
-            hour=schedule.time_of_day.hour,
-            minute=schedule.time_of_day.minute,
-            second=0,
-            microsecond=0
-        )
-    
-    elif schedule.frequency == 'monthly':
-        next_run = now.replace(
-            day=schedule.day_of_month,
-            hour=schedule.time_of_day.hour,
-            minute=schedule.time_of_day.minute,
-            second=0,
-            microsecond=0
-        )
-        if next_run <= now:
-            # Move to next month
-            if now.month == 12:
-                next_run = next_run.replace(year=now.year + 1, month=1)
-            else:
-                next_run = next_run.replace(month=now.month + 1)
-    
-    else:
-        # Manual - no next run
-        next_run = None
-    
-    return next_run
+        return candidate if candidate > now else candidate + timezone.timedelta(days=1)
+    if schedule.frequency == 'weekly':
+        candidate += timezone.timedelta(days=((schedule.schedule_day_of_week or 0) - now.weekday()) % 7)
+        return candidate if candidate > now else candidate + timezone.timedelta(days=7)
+    if schedule.frequency == 'monthly':
+        year, month = now.year, now.month
+        for _ in range(2):
+            day = min(schedule.schedule_day_of_month or 1, calendar.monthrange(year, month)[1])
+            candidate = candidate.replace(year=year, month=month, day=day)
+            if candidate > now:
+                return candidate
+            year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return None

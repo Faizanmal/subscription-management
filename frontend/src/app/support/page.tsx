@@ -7,7 +7,7 @@ export const metadata = {
 
 export default function SupportPage() {
   return (
-    <LegalShell title="Support & feedback" updated="November 1, 2026">
+    <LegalShell title="Support & feedback" updated="November 4, 2026">
       <p>
         We are in private beta / early launch. Reach us directly — there is no ticket portal yet.
       </p>
@@ -55,7 +55,7 @@ export default function SupportPage() {
 
       <h2>Status</h2>
       <p>
-        Operators monitor <code>/api/v1/health/</code>. If the app is unreachable, email support with
+        If the app is unreachable, email support with
         your organization name and approximate time of the issue.
       </p>
     </LegalShell>

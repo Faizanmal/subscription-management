@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { useAuthStore, useIntegrationsStore, useOrganizationStore, useSubscriptionsStore } from '@/lib/stores';
-import { organizationApi, integrationsApi } from '@/lib/services';
+import { authApi, organizationApi, integrationsApi } from '@/lib/services';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,17 +20,22 @@ import {
   Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { AuthShell } from '@/components/auth-shell';
+import { FormMessage } from '@/components/form-message';
+import { apiErrorMessage } from '@/lib/api-error';
 import { hardNavigate } from '@/lib/navigation';
 
-const STEPS = ['Welcome', 'Connect', 'First insight', 'Done'] as const;
+const STEPS = ['Welcome', 'Connect', 'Inventory', 'Done'] as const;
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { isAuthenticated, fetchUser } = useAuthStore();
+  const { user, isAuthenticated, fetchUser } = useAuthStore();
   const { organization, fetchOrganization } = useOrganizationStore();
   const { integrations, fetchIntegrations, syncIntegration } = useIntegrationsStore();
   const { fetchSubscriptions, subscriptions } = useSubscriptionsStore();
 
+  const [organizationName, setOrganizationName] = useState('');
+  const [organizationError, setOrganizationError] = useState('');
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [manualName, setManualName] = useState('');
@@ -42,10 +47,11 @@ export default function OnboardingPage() {
       return;
     }
     void fetchUser();
+    if (!user?.organization_id || user.agreements_required) return;
     void fetchOrganization();
     void fetchIntegrations();
     void fetchSubscriptions();
-  }, [isAuthenticated, router, fetchUser, fetchOrganization, fetchIntegrations, fetchSubscriptions]);
+  }, [isAuthenticated, user?.organization_id, user?.agreements_required, router, fetchUser, fetchOrganization, fetchIntegrations, fetchSubscriptions]);
 
   useEffect(() => {
     const settings = (organization?.settings || {}) as Record<string, unknown>;
@@ -157,17 +163,20 @@ export default function OnboardingPage() {
       toast.success('You are ready to cut SaaS waste');
       router.push('/dashboard');
     } catch {
-      try {
-        localStorage.setItem('swm_onboarding_completed', '1');
-      } catch {
-        /* ignore */
-      }
-      router.push('/dashboard');
+      toast.error('Setup progress could not be saved. Please retry.');
     } finally {
       setBusy(false);
     }
   };
 
+  if (isAuthenticated && user && !user.organization_id) {
+    return <AuthShell title="Create your workspace." description="Start a 14-day app trial. No card required and no automatic charge."><form className="space-y-5 rounded-xl border bg-card p-6" onSubmit={async event => {
+      event.preventDefault(); setBusy(true); setOrganizationError('');
+      try { await authApi.startOrganization(organizationName.trim()); await fetchUser(); await fetchOrganization(); }
+      catch (failure) { setOrganizationError(apiErrorMessage(failure, 'Unable to create your workspace. Please try again.')); }
+      finally { setBusy(false); }
+    }}><FormMessage message={organizationError} /><Label htmlFor="organization-name">Organization name</Label><Input id="organization-name" autoComplete="organization" maxLength={255} required value={organizationName} onChange={event => setOrganizationName(event.target.value)} /><Button type="submit" disabled={busy || user.agreements_required}>{busy ? 'Creating…' : 'Create workspace'}</Button>{user.agreements_required && <Link href="/agreements" className="block text-primary underline">Review current policies to continue</Link>}</form></AuthShell>;
+  }
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-2xl space-y-8 py-4">
@@ -175,9 +184,9 @@ export default function OnboardingPage() {
           <Badge variant="secondary" className="mb-2">
             Setup
           </Badge>
-          <h1 className="text-2xl font-bold tracking-tight">Get to your first savings insight</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Build your software inventory</h1>
           <p className="text-gray-500 mt-1">
-            Connect a workspace directory or add one subscription manually — about five minutes.
+            Connect a workspace directory or add a subscription manually. You can skip optional steps and return later.
           </p>
         </div>
 
@@ -275,7 +284,7 @@ export default function OnboardingPage() {
         {step === 2 && (
           <Card>
             <CardHeader>
-              <CardTitle>First insight</CardTitle>
+              <CardTitle>Build your inventory</CardTitle>
               <CardDescription>
                 Run a sync if you connected a provider, or add your first subscription.
               </CardDescription>

@@ -3,6 +3,7 @@ Serializers for security app
 """
 
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
 from security.models import (
     APIKey, SecuritySetting, MFADevice,
     LoginAttempt, Session, DataAccessLog
@@ -204,7 +205,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     """Serializer for password reset confirmation"""
     
     token = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True, min_length=8)
+    new_password = serializers.CharField(required=True, validators=[validate_password])
     confirm_password = serializers.CharField(required=True)
     
     def validate(self, attrs):

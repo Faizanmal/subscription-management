@@ -60,6 +60,7 @@ class AuthenticationTestCase(TestCase):
         """Test user registration endpoint"""
         url = reverse('register')
         data = {
+            'accept_terms': True, 'acknowledge_privacy': True, 'terms_version': '2026-11-04', 'privacy_version': '2026-11-04',
             'email': 'newuser@example.com',
             'password': 'newpass123!@#',
             'password_confirm': 'newpass123!@#',
@@ -266,9 +267,12 @@ class OrganizationTestCase(TestCase):
         self.org.plan = Organization.PlanType.STARTER
         self.org.save(update_fields=['plan'])
         fake_event = {
+            'id': 'evt_checkout_upgrade',
             'type': 'checkout.session.completed',
             'data': {
                 'object': {
+                    'id': 'cs_test_123',
+                    'payment_status': 'paid',
                     'client_reference_id': str(self.org.id),
                     'customer': 'cus_test_123',
                     'subscription': 'sub_test_123',
@@ -277,7 +281,11 @@ class OrganizationTestCase(TestCase):
             },
         }
         with override_settings(STRIPE_WEBHOOK_SECRET='whsec_test_secret', STRIPE_SECRET_KEY='sk_test_dummy'):
-            with patch('stripe.Webhook.construct_event', return_value=fake_event):
+            with patch('stripe.Webhook.construct_event', return_value=fake_event), patch('stripe.Subscription.retrieve', return_value={
+                'id': 'sub_test_123', 'customer': 'cus_test_123', 'status': 'active',
+                'latest_invoice': {'status': 'paid'},
+                'items': {'data': [{'price': {'id': 'price_pro_configured'}}]},
+            }), override_settings(STRIPE_PRICE_PRO='price_pro_configured'):
                 response = self.client.post(
                     reverse('billing-webhook'),
                     data=b'{}',
@@ -299,6 +307,7 @@ class OrganizationTestCase(TestCase):
         self.org.stripe_subscription_id = 'sub_test_123'
         self.org.save(update_fields=['plan', 'stripe_customer_id', 'stripe_subscription_id'])
         fake_event = {
+            'id': 'evt_subscription_deleted',
             'type': 'customer.subscription.deleted',
             'data': {
                 'object': {
@@ -309,7 +318,9 @@ class OrganizationTestCase(TestCase):
             },
         }
         with override_settings(STRIPE_WEBHOOK_SECRET='whsec_test_secret', STRIPE_SECRET_KEY='sk_test_dummy'):
-            with patch('stripe.Webhook.construct_event', return_value=fake_event):
+            with patch('stripe.Webhook.construct_event', return_value=fake_event), patch('stripe.Subscription.retrieve', return_value={
+                'id': 'sub_test_123', 'customer': 'cus_test_123', 'status': 'canceled',
+            }):
                 response = self.client.post(
                     reverse('billing-webhook'),
                     data=b'{}',
@@ -386,6 +397,7 @@ class InvitationAcceptTestCase(TestCase):
         response = self.client.post(
             url,
             {
+                'accept_terms': True, 'acknowledge_privacy': True, 'terms_version': '2026-11-04', 'privacy_version': '2026-11-04',
                 'token': 'invite-token-abc',
                 'password': 'Newhire123!@#x',
                 'password_confirm': 'Newhire123!@#x',
@@ -403,6 +415,7 @@ class InvitationAcceptTestCase(TestCase):
         response = self.client.post(
             url,
             {
+                'accept_terms': True, 'acknowledge_privacy': True, 'terms_version': '2026-11-04', 'privacy_version': '2026-11-04',
                 'token': 'not-a-real-token',
                 'password': 'Newhire123!@#x',
                 'password_confirm': 'Newhire123!@#x',

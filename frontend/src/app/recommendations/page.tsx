@@ -1,5 +1,6 @@
 'use client';
 
+import { FormMessage } from '@/components/form-message';
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { useRecommendationsStore } from '@/lib/stores';
@@ -282,6 +283,7 @@ export default function RecommendationsPage() {
     quickWins,
     totalSavings,
     isLoading,
+    error: loadError,
     fetchRecommendations,
     fetchQuickWins,
     approveRecommendation,
@@ -342,7 +344,7 @@ export default function RecommendationsPage() {
       <DashboardLayout>
         <div className="space-y-6">
           <Skeleton className="h-10 w-64" />
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -356,8 +358,9 @@ export default function RecommendationsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {loadError && <div><FormMessage message="This information could not load. Retry before relying on the totals below." /><Button variant="outline" onClick={() => void fetchRecommendations()}>Retry loading</Button></div>}
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold">AI Recommendations</h1>
             <p className="text-gray-500">
@@ -452,7 +455,7 @@ export default function RecommendationsPage() {
                       <span className="font-medium">{rec.subscription?.name}</span>
                     </div>
                     <p className="text-sm text-gray-500 mb-2">{rec.title}</p>
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <span className="text-lg font-bold text-green-600">
                         ${rec.potential_savings.toLocaleString()}
                       </span>
@@ -510,7 +513,7 @@ export default function RecommendationsPage() {
 
         {/* Tabs */}
         <Tabs defaultValue="pending">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="pending">
               Pending ({pendingRecs.length})
             </TabsTrigger>

@@ -7,6 +7,8 @@
 export interface User {
   id: string;
   email: string;
+  agreements_required?: boolean;
+  role_id?: string;
   first_name: string;
   last_name: string;
   phone?: string;
@@ -18,6 +20,7 @@ export interface User {
   is_active: boolean;
   mfa_enabled: boolean;
   email_verified: boolean;
+  email_verification_required?: boolean;
   organization_id: string;
   organization_name?: string;
   notification_preferences?: Record<string, unknown>;
@@ -27,7 +30,7 @@ export interface User {
   updated_at: string;
 }
 
-export type UserRole = 'admin' | 'finance' | 'department_lead' | 'it_admin' | 'viewer' | 'manager';
+export type UserRole = 'admin' | 'finance' | 'department_lead' | 'team_lead' | 'member' | 'it_admin' | 'viewer' | 'manager';
 
 export interface Organization {
   id: string;
@@ -36,6 +39,8 @@ export interface Organization {
   domain?: string;
   logo?: string;
   plan: PlanType;
+  is_on_trial?: boolean;
+  trial_ends_at?: string | null;
   default_currency?: string;
   plan_expires_at?: string;
   settings: OrganizationSettings;
@@ -620,6 +625,8 @@ export interface BackupSchedule {
 }
 
 export interface Backup {
+  restore_status?: 'idle' | 'pending' | 'running' | 'completed' | 'failed';
+  restore_error?: string;
   id: string;
   organization_id: string;
   schedule_id?: string;
@@ -770,9 +777,23 @@ export interface AuthTokens {
 export interface LoginCredentials {
   email: string;
   password: string;
+  otp?: string;
 }
 
-export interface RegisterData {
+export interface PolicyVersions {
+  terms_version: string;
+  privacy_version: string;
+  social_providers: { google: boolean; microsoft: boolean };
+}
+
+export interface PolicyAcceptancePayload {
+  accept_terms: boolean;
+  acknowledge_privacy: boolean;
+  terms_version: string;
+  privacy_version: string;
+}
+
+export interface RegisterData extends PolicyAcceptancePayload {
   email: string;
   password: string;
   password_confirm: string;

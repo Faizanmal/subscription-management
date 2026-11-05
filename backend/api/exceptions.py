@@ -5,6 +5,7 @@ Custom exception handler for API
 from rest_framework.views import exception_handler
 from rest_framework.response import Response
 from rest_framework import status
+from django.conf import settings
 import logging
 
 logger = logging.getLogger('swm')
@@ -17,7 +18,10 @@ def custom_exception_handler(exc, context):
     response = exception_handler(exc, context)
     
     # Log the exception
-    logger.error(f"API Exception: {exc}", exc_info=True)
+    if response is None or response.status_code >= 500:
+        logger.error('Unhandled API exception', exc_info=True)
+    else:
+        logger.info('API request rejected (%s)', response.status_code)
     
     if response is not None:
         # Customize the response format
@@ -37,7 +41,7 @@ def custom_exception_handler(exc, context):
             'error': {
                 'code': 500,
                 'message': 'Internal server error',
-                'details': str(exc)
+                'details': str(exc) if settings.DEBUG else {}
             }
         }
         response = Response(custom_response_data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

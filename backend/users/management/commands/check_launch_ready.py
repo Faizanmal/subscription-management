@@ -1,153 +1,129 @@
-"""
-Validate staging/production launch configuration.
+"""Validate release configuration without exposing credentials."""
 
-Usage:
-  python manage.py check_launch_ready
-  python manage.py check_launch_ready --strict
-"""
+import ipaddress
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+
+
+def complete(value, prefixes=()):
+    value = (value or '').strip()
+    if any(word in value.lower() for word in ('replace', 'placeholder', 'example', 'dummy', 'change-me', 'changeme', 'your-', 'your_')):
+        return False
+    return any(value.startswith(p) and len(value) > len(p) + 8 for p in prefixes) if prefixes else bool(value)
+
+
+def public_origin(value):
+    try:
+        url = urlsplit(value)
+        _ = url.port  # Reject malformed ports as well as malformed hostnames.
+        host = (url.hostname or '').lower()
+        if url.scheme != 'https' or not host or url.username or url.password or url.query or url.fragment or url.path not in ('', '/'):
+            return False
+        if host in ('localhost', 'backend', 'frontend', 'example.com') or host.endswith(('.localhost', '.local', '.example.com', '.test', '.invalid')):
+            return False
+        try:
+            return ipaddress.ip_address(host).is_global
+        except ValueError:
+            return '.' in host and '*' not in host
+    except ValueError:
+        return False
 
 
 class Command(BaseCommand):
-    help = 'Check env/config readiness for staging or production launch'
+    help = 'Check release configuration, database, migrations, cache, and Celery broker'
 
     def add_arguments(self, parser):
-        parser.add_argument(
-            '--strict',
-            action='store_true',
-            help='Exit non-zero if any required or recommended check fails',
-        )
+        parser.add_argument('--strict', action='store_true', help='Also fail on operational recommendations')
+        parser.add_argument('--require-billing', action='store_true')
+        parser.add_argument('--require-connector', action='append', default=[], choices=['google', 'microsoft', 'plaid', 'ai'])
 
     def handle(self, *args, **options):
-        strict = options['strict']
-        required_failures = []
-        warnings = []
+        failures, warnings = [], []
 
-        def req(ok, label, hint=''):
+        def check(ok, label, hint='', recommended=False):
             if ok:
                 self.stdout.write(self.style.SUCCESS(f'OK  {label}'))
             else:
-                msg = f'FAIL {label}' + (f' — {hint}' if hint else '')
-                self.stdout.write(self.style.ERROR(msg))
-                required_failures.append(label)
+                (warnings if recommended else failures).append(label)
+                self.stdout.write(f'{"WARN" if recommended else "FAIL"} {label}' + (f' — {hint}' if hint else ''))
 
-        def warn(ok, label, hint=''):
-            if ok:
-                self.stdout.write(self.style.SUCCESS(f'OK  {label}'))
-            else:
-                msg = f'WARN {label}' + (f' — {hint}' if hint else '')
-                self.stdout.write(self.style.WARNING(msg))
-                warnings.append(label)
-
-        debug = bool(settings.DEBUG)
-        testing = bool(getattr(settings, 'TESTING', False))
-
-        req(not debug or testing, 'DJANGO_DEBUG is False', 'Set DJANGO_DEBUG=False for staging/prod')
-        req(bool(settings.SECRET_KEY) and 'insecure' not in settings.SECRET_KEY.lower(),
-            'DJANGO_SECRET_KEY is set', 'Use a long random secret')
-        req(bool(getattr(settings, 'ENCRYPTION_KEY', '')),
-            'ENCRYPTION_KEY is set', 'Generate with Fernet.generate_key()')
-
-        if getattr(settings, 'ENCRYPTION_KEY', ''):
-            try:
-                from cryptography.fernet import Fernet
-                Fernet(settings.ENCRYPTION_KEY.encode() if isinstance(settings.ENCRYPTION_KEY, str) else settings.ENCRYPTION_KEY)
-                self.stdout.write(self.style.SUCCESS('OK  ENCRYPTION_KEY is a valid Fernet key'))
-            except Exception:
-                req(False, 'ENCRYPTION_KEY is a valid Fernet key', 'Regenerate the key')
-
-        frontend = getattr(settings, 'FRONTEND_URL', '') or ''
-        req(frontend.startswith('https://') or debug or testing,
-            'FRONTEND_URL uses HTTPS', f'Current: {frontend or "(empty)"}')
-
-        cors = getattr(settings, 'CORS_ALLOWED_ORIGINS', None) or []
-        if isinstance(cors, str):
-            cors_list = [o.strip() for o in cors.split(',') if o.strip()]
-        else:
-            cors_list = list(cors)
-        frontend_norm = frontend.rstrip('/')
-        warn(
-            (not frontend_norm) or frontend_norm in [o.rstrip('/') for o in cors_list] or debug or testing,
-            'CORS_ALLOWED_ORIGINS includes FRONTEND_URL',
-            f'FRONTEND_URL={frontend or "(empty)"}; CORS={cors_list or "(empty)"}',
-        )
-
-        email_backend = getattr(settings, 'EMAIL_BACKEND', '')
-        warn(
-            'console' not in email_backend,
-            'Email backend is not console',
-            f'Current: {email_backend}',
-        )
-
-        def _stripe_filled(value, prefixes):
-            """True when value looks like a real Stripe id, not a bare prefix placeholder."""
-            value = (value or '').strip()
-            if not value:
-                return False
-            for prefix in prefixes:
-                if value == prefix or value == prefix.rstrip('_'):
-                    return False
-                if value.startswith(prefix) and len(value) > len(prefix) + 8:
-                    return True
-            return len(value) > 16
-
-        stripe_key = getattr(settings, 'STRIPE_SECRET_KEY', '') or ''
-        stripe_whsec = getattr(settings, 'STRIPE_WEBHOOK_SECRET', '') or ''
-        stripe_price = getattr(settings, 'STRIPE_PRICE_PRO', '') or ''
-        warn(
-            _stripe_filled(stripe_key, ('sk_test_', 'sk_live_')),
-            'STRIPE_SECRET_KEY looks complete',
-            'Paste full sk_test_… / sk_live_… from Stripe Dashboard (not just the prefix)',
-        )
-        warn(
-            _stripe_filled(stripe_whsec, ('whsec_',)),
-            'STRIPE_WEBHOOK_SECRET looks complete',
-            'From `stripe listen` or Dashboard webhook signing secret',
-        )
-        warn(
-            _stripe_filled(stripe_price, ('price_',)),
-            'STRIPE_PRICE_PRO looks complete',
-            'Use a full Price ID (price_…) from the Stripe product',
-        )
-
-        if stripe_key.startswith('sk_live_'):
-            warn(frontend.startswith('https://'), 'Live Stripe + HTTPS frontend',
-                 'Do not take live payments on HTTP')
-
-        warn(bool(getattr(settings, 'SENTRY_DSN', '')),
-             'SENTRY_DSN set', 'Recommended for production errors')
-        warn(bool(getattr(settings, 'GOOGLE_CLIENT_ID', '')),
-             'GOOGLE_CLIENT_ID set', 'Needed for Workspace discovery smoke test')
-        warn(bool(getattr(settings, 'MICROSOFT_CLIENT_ID', '')),
-             'MICROSOFT_CLIENT_ID set', 'Needed for M365 discovery smoke test')
-
-        # DB ping
+        check(not settings.DEBUG, 'DJANGO_DEBUG is False')
+        for label, value, minimum in [('DJANGO_SECRET_KEY', settings.SECRET_KEY, 50), ('JWT signing key', settings.SIMPLE_JWT['SIGNING_KEY'], 32)]:
+            check(complete(value) and len(value) >= minimum and 'insecure' not in value.lower(), f'{label} is strong', f'Use a random secret of at least {minimum} characters')
         try:
-            from django.db import connection
-            with connection.cursor() as cursor:
-                cursor.execute('SELECT 1')
-            self.stdout.write(self.style.SUCCESS('OK  Database connection'))
-        except Exception as exc:
-            req(False, 'Database connection', str(exc)[:160])
-
-        self.stdout.write('')
-        self.stdout.write(
-            f'Summary: {len(required_failures)} required failure(s), {len(warnings)} warning(s)'
-        )
-        self.stdout.write(self.style.NOTICE(
-            'Stripe webhook endpoint: https://<api-host>/api/v1/auth/billing/webhook/'
-        ))
-        self.stdout.write(self.style.NOTICE(
-            'Events: checkout.session.completed, customer.subscription.updated, customer.subscription.deleted'
-        ))
-        self.stdout.write(self.style.NOTICE('Health: GET /api/v1/health/'))
-        self.stdout.write(self.style.NOTICE(
-            'Local Stripe CLI: stripe listen --forward-to localhost:8000/api/v1/auth/billing/webhook/'
-        ))
-
-        if required_failures and strict:
-            raise CommandError('Launch readiness check failed (required items)')
-        if (required_failures or warnings) and strict:
-            raise CommandError('Launch readiness check failed (strict mode)')
+            from cryptography.fernet import Fernet
+            Fernet(settings.ENCRYPTION_KEY)
+            valid_key = True
+        except (ValueError, TypeError):
+            valid_key = False
+        check(valid_key, 'ENCRYPTION_KEY is a valid Fernet key')
+        frontend = settings.FRONTEND_URL.rstrip('/')
+        check(public_origin(frontend), 'FRONTEND_URL is a public HTTPS origin')
+        hosts = settings.ALLOWED_HOSTS
+        check(bool(hosts) and all(host and not host.startswith('.') and '*' not in host for host in hosts), 'ALLOWED_HOSTS contains explicit hosts')
+        check(any(public_origin(f'https://{host}') for host in hosts), 'ALLOWED_HOSTS includes a public host')
+        for name in ('CORS_ALLOWED_ORIGINS', 'CSRF_TRUSTED_ORIGINS'):
+            origins = getattr(settings, name, [])
+            check(frontend in [origin.rstrip('/') for origin in origins] and all(public_origin(origin) for origin in origins), f'{name} matches public frontend')
+        check(getattr(settings, 'SECURE_SSL_REDIRECT', False), 'HTTPS redirect is enabled')
+        check(getattr(settings, 'SESSION_COOKIE_SECURE', False) and getattr(settings, 'CSRF_COOKIE_SECURE', False), 'Session and CSRF cookies require HTTPS')
+        check(settings.DATABASES['default']['ENGINE'] == 'django.db.backends.postgresql', 'Production database uses PostgreSQL')
+        check(getattr(settings, 'ENFORCE_EMAIL_VERIFICATION', False), 'Email ownership verification is enforced')
+        check(getattr(settings, 'ENFORCE_POLICY_ACCEPTANCE', False), 'Current policy acceptance is enforced')
+        check(not getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False), 'Background jobs use real workers')
+        backend = settings.EMAIL_BACKEND
+        check(not any(part in backend for part in ('console.', 'locmem.', 'dummy.', 'filebased.')), 'Email uses a delivery backend')
+        if backend == 'django.core.mail.backends.smtp.EmailBackend':
+            check(complete(settings.EMAIL_HOST) and settings.EMAIL_HOST != 'localhost', 'SMTP host is configured')
+            check(not settings.EMAIL_HOST_USER or complete(settings.EMAIL_HOST_PASSWORD), 'SMTP authentication is complete')
+        check(complete(settings.DEFAULT_FROM_EMAIL) and not settings.DEFAULT_FROM_EMAIL.endswith('@swm.com'), 'Sender email is configured')
+        billing = [settings.STRIPE_SECRET_KEY, settings.STRIPE_WEBHOOK_SECRET, settings.STRIPE_PRICE_PRO]
+        if options['require_billing'] or any(billing):
+            for label, value, prefixes in zip(('STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PRO'), billing, (('sk_test_', 'sk_live_'), ('whsec_',), ('price_',))):
+                check(complete(value, prefixes), f'{label} looks complete')
+        else:
+            self.stdout.write('SKIP Billing is unconfigured; do not offer paid checkout')
+        connectors = {
+            'google': (settings.GOOGLE_CLIENT_ID, settings.GOOGLE_CLIENT_SECRET),
+            'microsoft': (settings.MICROSOFT_CLIENT_ID, settings.MICROSOFT_CLIENT_SECRET),
+            'plaid': (settings.PLAID_CLIENT_ID, settings.PLAID_SECRET),
+            'ai': (settings.OPENAI_API_KEY,),
+        }
+        for name, values in connectors.items():
+            if name in options['require_connector'] or any(values):
+                check(all(complete(value) for value in values), f'{name} credentials are complete')
+            else:
+                self.stdout.write(f'SKIP {name} is unconfigured; do not advertise it as available')
+        check(bool(settings.SENTRY_DSN) and settings.SENTRY_DSN.startswith('https://'), 'SENTRY_DSN configured', 'Configure production error monitoring', recommended=True)
+        try:
+            connection.ensure_connection()
+            check(True, 'Database connection')
+            executor = MigrationExecutor(connection)
+            check(not executor.migration_plan(executor.loader.graph.leaf_nodes()), 'All database migrations applied')
+        except Exception:
+            check(False, 'Database and migration checks', 'Check connectivity and credentials privately')
+        try:
+            from django.core.cache import cache
+            from uuid import uuid4
+            key = f'launch-probe:{uuid4()}'
+            cache.set(key, 'ok', timeout=10)
+            check(cache.get(key) == 'ok', 'Cache read/write')
+            cache.delete(key)
+        except Exception:
+            check(False, 'Cache read/write', 'Check Redis configuration privately')
+        try:
+            import redis
+            broker = redis.Redis.from_url(settings.CELERY_BROKER_URL, socket_connect_timeout=3, socket_timeout=3)
+            try:
+                check(broker.ping(), 'Celery Redis broker connection')
+            finally:
+                broker.close()
+        except Exception:
+            check(False, 'Celery Redis broker connection', 'Check broker configuration privately')
+        self.stdout.write(f'Summary: {len(failures)} required failure(s), {len(warnings)} warning(s)')
+        if failures or (options['strict'] and warnings):
+            raise CommandError('Launch readiness check failed; resolve the checks above')

@@ -7,6 +7,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.db import transaction
 import pyotp
 import qrcode
 import io
@@ -440,6 +442,7 @@ class PasswordResetConfirmView(APIView):
     
     permission_classes = [permissions.AllowAny]
     
+    @transaction.atomic
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -458,8 +461,8 @@ class PasswordResetConfirmView(APIView):
         
         from users.models import User
         try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
+            user = User.objects.select_for_update().get(id=user_id)
+        except (User.DoesNotExist, ValidationError, ValueError):
             return Response(
                 {'error': 'Invalid reset token'},
                 status=status.HTTP_400_BAD_REQUEST

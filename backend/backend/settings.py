@@ -23,7 +23,10 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-dev-key-change-in-p
 DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() == 'true'
 TESTING = 'test' in sys.argv or os.getenv('DJANGO_TESTING', '').lower() == 'true'
 
-ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = [host.strip() for host in os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if host.strip()]
+# Enable only behind a proxy that overwrites this header and blocks upstream access.
+if os.getenv('DJANGO_TRUST_PROXY', 'False').lower() == 'true':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Application definition
 INSTALLED_APPS = [
@@ -66,6 +69,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'social_django.middleware.SocialAuthExceptionMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'axes.middleware.AxesMiddleware',
     'users.middleware.OrganizationMiddleware',
@@ -165,6 +169,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Custom user model
 AUTH_USER_MODEL = 'users.User'
+TERMS_VERSION = os.getenv('SWM_TERMS_VERSION', '2026-11-04')
+PRIVACY_VERSION = os.getenv('SWM_PRIVACY_VERSION', '2026-11-04')
+ENFORCE_POLICY_ACCEPTANCE = True
 
 # Authentication backends
 AUTHENTICATION_BACKENDS = [
@@ -192,9 +199,10 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 
 # Media files
-MEDIA_URL = 'media/'
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 EXPORT_ROOT = BASE_DIR / 'exports'
+BACKUP_ROOT = BASE_DIR / 'workspace_backups'
 (BASE_DIR / 'exports').mkdir(exist_ok=True)
 
 # Default primary key field type
@@ -222,8 +230,7 @@ CSRF_TRUSTED_ORIGINS = [
 # REST Framework configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
+        'users.authentication.MFAJWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -254,6 +261,7 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
+    'CHECK_REVOKE_TOKEN': True,
     'ALGORITHM': 'HS256',
     'SIGNING_KEY': os.getenv('JWT_SECRET_KEY', SECRET_KEY),
     'AUTH_HEADER_TYPES': ('Bearer',),
@@ -261,6 +269,7 @@ SIMPLE_JWT = {
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
     'TOKEN_OBTAIN_SERIALIZER': 'users.serializers.CustomTokenObtainPairSerializer',
+    'TOKEN_REFRESH_SERIALIZER': 'users.serializers.SecureTokenRefreshSerializer',
 }
 
 # API Documentation
@@ -277,8 +286,8 @@ SPECTACULAR_SETTINGS = {
 SOCIAL_AUTH_JSONFIELD_ENABLED = True
 SOCIAL_AUTH_URL_NAMESPACE = 'social'
 
-SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')
-SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', '')
+SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.getenv('GOOGLE_OAUTH_CLIENT_ID', os.getenv('GOOGLE_CLIENT_ID', ''))
+SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', os.getenv('GOOGLE_CLIENT_SECRET', ''))
 SOCIAL_AUTH_GOOGLE_OAUTH2_SCOPE = [
     'openid',
     'https://www.googleapis.com/auth/userinfo.email',
@@ -301,14 +310,15 @@ SOCIAL_AUTH_PIPELINE = (
     'social_core.pipeline.user.user_details',
     'users.pipeline.save_organization_info',
     'users.pipeline.assign_default_role',
-    'users.pipeline.check_sso_connection',
     'users.pipeline.create_audit_log',
-    'users.pipeline.sync_google_workspace_users',
 )
 
-SOCIAL_AUTH_LOGIN_REDIRECT_URL = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/dashboard"
+SOCIAL_AUTH_LOGIN_REDIRECT_URL = '/social/finish/'
 SOCIAL_AUTH_NEW_USER_REDIRECT_URL = SOCIAL_AUTH_LOGIN_REDIRECT_URL
 LOGIN_REDIRECT_URL = SOCIAL_AUTH_LOGIN_REDIRECT_URL
+SOCIAL_AUTH_FIELDS_STORED_IN_SESSION = ['swm_challenge']
+SOCIAL_AUTH_SANITIZE_REDIRECTS = True
+SOCIAL_AUTH_LOGIN_ERROR_URL = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/login?social=error"
 
 # Integration OAuth (Google Workspace / Microsoft 365 connectors)
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', os.getenv('GOOGLE_OAUTH_CLIENT_ID', ''))
@@ -348,6 +358,7 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 # Email configuration
 # Prefer Anymail when ANYMAIL_BACKEND / ESP credentials are set; else Django SMTP/console.
 EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+PASSWORD_RESET_TIMEOUT = 3600
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
@@ -439,10 +450,17 @@ LOGGING = {
 
 # Security settings for production (skip during tests so HTTP clients work)
 if not DEBUG and not TESTING:
+    from django.core.exceptions import ImproperlyConfigured
+    if len(SECRET_KEY) < 50 or 'insecure' in SECRET_KEY.lower() or 'replace-with' in SECRET_KEY.lower():
+        raise ImproperlyConfigured('Production DJANGO_SECRET_KEY must be a strong random secret of at least 50 characters.')
+    if len(SIMPLE_JWT['SIGNING_KEY']) < 32 or 'replace-with' in SIMPLE_JWT['SIGNING_KEY'].lower():
+        raise ImproperlyConfigured('Production JWT signing key must be a strong random secret of at least 32 characters.')
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
     SECURE_SSL_REDIRECT = True
+    # Internal container/liveness checks must work before TLS routing is available.
+    SECURE_REDIRECT_EXEMPT = [r'^api/v1/health/$']
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 31536000
@@ -488,3 +506,6 @@ if TESTING:
     CELERY_TASK_ALWAYS_EAGER = True
     CELERY_TASK_EAGER_PROPAGATES = True
     AXES_ENABLED = False
+
+# Always require mailbox ownership before protected application access.
+ENFORCE_EMAIL_VERIFICATION = True

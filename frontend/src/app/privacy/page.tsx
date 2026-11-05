@@ -6,7 +6,7 @@ export const metadata = {
 
 export default function PrivacyPage() {
   return (
-    <LegalShell title="Privacy Policy" updated="November 1, 2026">
+    <LegalShell title="Privacy Policy" updated="November 4, 2026">
       <p>
         Subscription Waste Manager (&quot;SWM&quot;, &quot;we&quot;) helps organizations discover and
         reduce wasted software spend. This policy explains what we collect and how we use it.

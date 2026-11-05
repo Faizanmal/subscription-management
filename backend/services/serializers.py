@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from rest_framework import serializers
+from api.serializers import OrganizationModelSerializer
 from services.models import (
     SoftwareVendor, Subscription, SubscriptionUser,
     UsageEvent, UsageMetrics, CostRecord,
@@ -74,7 +75,7 @@ class SubscriptionWriteMixin:
         return super().to_internal_value(payload)
 
 
-class SoftwareVendorSerializer(serializers.ModelSerializer):
+class SoftwareVendorSerializer(OrganizationModelSerializer):
     """Software vendor serializer"""
     
     class Meta:
@@ -87,7 +88,7 @@ class SoftwareVendorSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'slug', 'is_verified', 'created_at', 'updated_at']
 
 
-class SubscriptionSerializer(SubscriptionWriteMixin, serializers.ModelSerializer):
+class SubscriptionSerializer(SubscriptionWriteMixin, OrganizationModelSerializer):
     """Subscription serializer"""
     
     vendor_id = serializers.UUIDField(read_only=True, allow_null=True)
@@ -123,7 +124,7 @@ class SubscriptionSerializer(SubscriptionWriteMixin, serializers.ModelSerializer
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class SubscriptionCreateSerializer(SubscriptionWriteMixin, serializers.ModelSerializer):
+class SubscriptionCreateSerializer(SubscriptionWriteMixin, OrganizationModelSerializer):
     """Serializer for creating subscriptions"""
     
     class Meta:
@@ -147,7 +148,7 @@ class SubscriptionCreateSerializer(SubscriptionWriteMixin, serializers.ModelSeri
         return SubscriptionSerializer(instance, context=self.context).data
 
 
-class SubscriptionListSerializer(serializers.ModelSerializer):
+class SubscriptionListSerializer(OrganizationModelSerializer):
     """Lightweight subscription serializer for lists"""
     
     vendor_name = serializers.CharField(source='vendor.name', read_only=True, allow_null=True)
@@ -168,7 +169,7 @@ class SubscriptionListSerializer(serializers.ModelSerializer):
         ]
 
 
-class SubscriptionUserSerializer(serializers.ModelSerializer):
+class SubscriptionUserSerializer(OrganizationModelSerializer):
     """Subscription user assignment serializer"""
     
     user_email = serializers.CharField(source='user.email', read_only=True)
@@ -186,7 +187,7 @@ class SubscriptionUserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'assigned_at', 'created_at', 'updated_at']
 
 
-class UsageEventSerializer(serializers.ModelSerializer):
+class UsageEventSerializer(OrganizationModelSerializer):
     """Usage event serializer"""
     
     user_email = serializers.CharField(source='user.email', read_only=True)
@@ -200,7 +201,7 @@ class UsageEventSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'timestamp']
 
 
-class UsageMetricsSerializer(serializers.ModelSerializer):
+class UsageMetricsSerializer(OrganizationModelSerializer):
     """Usage metrics serializer"""
     
     subscription_name = serializers.CharField(source='subscription.name', read_only=True)
@@ -218,7 +219,7 @@ class UsageMetricsSerializer(serializers.ModelSerializer):
         read_only_fields = '__all__'
 
 
-class CostRecordSerializer(serializers.ModelSerializer):
+class CostRecordSerializer(OrganizationModelSerializer):
     """Cost record serializer"""
     
     subscription_name = serializers.CharField(source='subscription.name', read_only=True)
@@ -235,7 +236,7 @@ class CostRecordSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
-class RedundancyGroupMemberSerializer(serializers.ModelSerializer):
+class RedundancyGroupMemberSerializer(OrganizationModelSerializer):
     """Redundancy group member serializer"""
     
     subscription_name = serializers.CharField(source='subscription.name', read_only=True)
@@ -251,7 +252,7 @@ class RedundancyGroupMemberSerializer(serializers.ModelSerializer):
         ]
 
 
-class RedundancyGroupSerializer(serializers.ModelSerializer):
+class RedundancyGroupSerializer(OrganizationModelSerializer):
     """Redundancy group serializer"""
     
     members = RedundancyGroupMemberSerializer(many=True, read_only=True)
@@ -270,7 +271,7 @@ class RedundancyGroupSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class RecommendationSerializer(serializers.ModelSerializer):
+class RecommendationSerializer(OrganizationModelSerializer):
     """Recommendation serializer"""
     
     subscription_name = serializers.CharField(source='subscription.name', read_only=True)
@@ -298,7 +299,7 @@ class RecommendationActionSerializer(serializers.Serializer):
     defer_until = serializers.DateTimeField(required=False)
 
 
-class AlertSerializer(serializers.ModelSerializer):
+class AlertSerializer(OrganizationModelSerializer):
     """Alert serializer"""
     
     subscription_name = serializers.CharField(source='subscription.name', read_only=True)
@@ -329,7 +330,7 @@ class AlertActionSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
 
 
-class WorkflowStepSerializer(serializers.ModelSerializer):
+class WorkflowStepSerializer(OrganizationModelSerializer):
     """Workflow step serializer"""
     
     approver_name = serializers.CharField(source='approver.full_name', read_only=True)
@@ -344,7 +345,7 @@ class WorkflowStepSerializer(serializers.ModelSerializer):
         ]
 
 
-class WorkflowSerializer(serializers.ModelSerializer):
+class WorkflowSerializer(OrganizationModelSerializer):
     """Workflow serializer"""
     
     subscription_name = serializers.CharField(source='subscription.name', read_only=True)
@@ -369,7 +370,7 @@ class WorkflowSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'requested_by', 'created_at', 'updated_at']
 
 
-class WorkflowCreateSerializer(serializers.ModelSerializer):
+class WorkflowCreateSerializer(OrganizationModelSerializer):
     """Serializer for creating workflows"""
     
     class Meta:
@@ -392,7 +393,7 @@ class WorkflowActionSerializer(serializers.Serializer):
     comments = serializers.CharField(required=False, allow_blank=True)
 
 
-class SavingsReportSerializer(serializers.ModelSerializer):
+class SavingsReportSerializer(OrganizationModelSerializer):
     """Savings report serializer"""
     
     generated_by_name = serializers.CharField(
@@ -411,7 +412,7 @@ class SavingsReportSerializer(serializers.ModelSerializer):
         read_only_fields = '__all__'
 
 
-class BudgetTargetSerializer(serializers.ModelSerializer):
+class BudgetTargetSerializer(OrganizationModelSerializer):
     """Budget target serializer"""
     
     department_name = serializers.CharField(source='department.name', read_only=True)
@@ -487,7 +488,7 @@ class TopSpendingSubscriptionSerializer(serializers.Serializer):
     department = serializers.CharField()
 
 
-class AutomationWorkflowSerializer(serializers.ModelSerializer):
+class AutomationWorkflowSerializer(OrganizationModelSerializer):
     """Serializer for automation workflows"""
     created_by_name = serializers.SerializerMethodField()
     trigger_type = serializers.CharField(source='trigger')
@@ -510,7 +511,7 @@ class AutomationWorkflowSerializer(serializers.ModelSerializer):
         return None
 
 
-class WorkflowExecutionSerializer(serializers.ModelSerializer):
+class WorkflowExecutionSerializer(OrganizationModelSerializer):
     """Serializer for workflow execution logs"""
     workflow_id = serializers.UUIDField(source='workflow.id', read_only=True)
     workflow_name = serializers.CharField(source='workflow.name', read_only=True)

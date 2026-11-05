@@ -52,16 +52,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - media_data:/app/media
+      - backup_data:/app/workspace_backups
+      - export_data:/app/exports
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; host=os.environ['DJANGO_ALLOWED_HOSTS'].split(',')[0].strip(); urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/v1/health/', headers={'Host': host}), timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
 
   celery:
     build:
       context: ./backend
     restart: unless-stopped
     command: celery -A backend worker -l warning
+    volumes:
+      - media_data:/app/media
+      - backup_data:/app/workspace_backups
+      - export_data:/app/exports
     env_file:
       - ./backend/.env.prod
     environment:
@@ -75,7 +89,7 @@ services:
       redis:
         condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
 
   celery-beat:
     build:
@@ -92,6 +106,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      backend:
+        condition: service_healthy
       celery:
         condition: service_started
 
@@ -101,20 +117,49 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?Set the public frontend origin}
+        NEXT_PUBLIC_INDEXABLE: ${NEXT_PUBLIC_INDEXABLE:-false}
+        NEXT_PUBLIC_LEGAL_BUSINESS_NAME: ${NEXT_PUBLIC_LEGAL_BUSINESS_NAME:-}
+        NEXT_PUBLIC_BUSINESS_COUNTRY: ${NEXT_PUBLIC_BUSINESS_COUNTRY:-}
+        NEXT_PUBLIC_SUPPORT_EMAIL: ${NEXT_PUBLIC_SUPPORT_EMAIL:-support@subscriptionwastemanager.com}
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     expose:
       - "3000"
 
-  # Example reverse proxy — replace with your preferred TLS terminator.
+  # Optional TLS proxy: start with --profile edge after setting APP_HOST/API_HOST.
+  caddy:
+    image: caddy:2-alpine
+    profiles: [edge]
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      APP_HOST: ${APP_HOST:-localhost}
+      API_HOST: ${API_HOST:-api.localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - media_data:/srv/swm-media:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+
+  # Alternative proxy — replace with your preferred TLS terminator.
   # caddy:
   #   image: caddy:2-alpine
   #   ports: ["80:80", "443:443"]
   #   volumes: ["./deploy/Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data"]
 
 volumes:
+  backup_data:
+  export_data:
+  media_data:
   postgres_data:
   redis_data:
+  caddy_data:
+  caddy_config:

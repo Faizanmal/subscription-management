@@ -1,5 +1,8 @@
 'use client';
 
+import { FormMessage } from '@/components/form-message';
+import { useAuthStore } from '@/lib/stores';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
@@ -58,6 +61,10 @@ import { format } from 'date-fns';
 import type { BackupSchedule, Backup, DataExport, ImportJob } from '@/types/swm';
 
 export default function BackupsPage() {
+  const admin = useAuthStore(state => state.user?.role === 'admin');
+  const [loadError, setLoadError] = useState('');
+  const [restoreId, setRestoreId] = useState<string | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [schedules, setSchedules] = useState<BackupSchedule[]>([]);
   const [backups, setBackups] = useState<Backup[]>([]);
   const [exports, setExports] = useState<DataExport[]>([]);
@@ -83,8 +90,9 @@ export default function BackupsPage() {
     include_recommendations: false,
   });
 
-  async function loadData() {
-    setIsLoading(true);
+  async function loadData(quiet = false) {
+    if (!quiet) setIsLoading(true);
+    setLoadError('');
     try {
       const [schedulesData, backupsData, exportsData, importsData] = await Promise.all([
         backupsApi.getSchedules(),
@@ -97,17 +105,18 @@ export default function BackupsPage() {
       setExports(exportsData);
       setImports(importsData);
     } catch {
+      setLoadError('Workspace data could not load. Retry to see the current records.');
     } finally {
       setIsLoading(false);
     }
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadData();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+    if (!admin) return;
+    const timer = window.setTimeout(() => void loadData(), 0);
+    const poll = window.setInterval(() => void loadData(true), 5000);
+    return () => { window.clearTimeout(timer); window.clearInterval(poll); };
+  }, [admin]);
 
   const handleCreateSchedule = async () => {
     try {
@@ -146,14 +155,15 @@ export default function BackupsPage() {
     }
   };
 
-  const handleRunBackup = async () => {
+  const handleRunBackup = async (scheduleId?: string) => {
+    setBackupBusy(true);
     try {
-      const backup = await backupsApi.createBackup();
+      const backup = await backupsApi.createBackup(scheduleId);
       setBackups([backup, ...backups]);
       toast.success('Backup started');
     } catch {
       toast.error('Failed to start backup');
-    }
+    } finally { setBackupBusy(false); }
   };
 
   const handleCreateExport = async () => {
@@ -208,14 +218,16 @@ export default function BackupsPage() {
   const handleRestoreBackup = async (id: string) => {
     try {
       await backupsApi.restoreBackup(id);
-      toast.success('Restore started');
+      toast.success('Restore started. Its status will update in the backup list.');
+      await loadData(true);
     } catch {
       toast.error('Failed to start restore');
     }
   };
 
-  const totalBackupSize = backups.reduce((acc, b) => acc + (b.size || 0), 0);
+  const totalBackupSize = backups.reduce((acc, b) => acc + (b.file_size || 0), 0);
 
+  if (!admin) return <DashboardLayout><div className="rounded-lg border p-6"><h1 className="text-2xl font-bold">Backups & exports</h1><p className="mt-3 text-muted-foreground">An organization admin manages snapshots, exports, and imports.</p></div></DashboardLayout>;
   if (isLoading) {
     return (
       <DashboardLayout>
@@ -236,6 +248,8 @@ export default function BackupsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        <FormMessage message={loadError} />{loadError && <Button variant="outline" onClick={() => void loadData()}>Retry loading</Button>}
+        <AlertDialog open={!!restoreId} onOpenChange={open => { if (!open) setRestoreId(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Restore workspace records?</AlertDialogTitle><AlertDialogDescription>This merges departments, teams, roles, subscriptions, and recommendations from the snapshot and can overwrite their current values. It does not restore login credentials, connector secrets, or remove newer records. Export current data first.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => { if (restoreId) void handleRestoreBackup(restoreId); setRestoreId(null); }}>Confirm restore</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
         {/* Header */}
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>
@@ -248,6 +262,8 @@ export default function BackupsPage() {
             <p className="text-gray-500">Manage data backups and exports</p>
           </div>
         </div>
+
+        <Button disabled={backupBusy} onClick={() => void handleRunBackup()}>{backupBusy ? 'Starting snapshot…' : 'Create workspace snapshot'}</Button>
 
         {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -285,7 +301,7 @@ export default function BackupsPage() {
 
         {/* Tabs */}
         <Tabs defaultValue="schedules">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="schedules">Schedules</TabsTrigger>
             <TabsTrigger value="backups">Backups</TabsTrigger>
             <TabsTrigger value="exports">Exports</TabsTrigger>
@@ -295,7 +311,7 @@ export default function BackupsPage() {
           <TabsContent value="schedules" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Backup Schedules</CardTitle>
                     <CardDescription>
@@ -366,7 +382,7 @@ export default function BackupsPage() {
                             />
                           </div>
                         </div>
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                           <Label>Enable Schedule</Label>
                           <Switch
                             checked={scheduleForm.is_active}
@@ -420,7 +436,7 @@ export default function BackupsPage() {
                             <p className="text-sm text-gray-500">
                               {(schedule.frequency || 'daily').charAt(0).toUpperCase() +
                                 (schedule.frequency || 'daily').slice(1)}{' '}
-                              • {schedule.retention_days} days retention
+                              â€¢ {schedule.retention_days} days retention
                             </p>
                             {schedule.last_run && (
                               <p className="text-xs text-gray-400">
@@ -440,7 +456,7 @@ export default function BackupsPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleRunBackup()}
+                            disabled={backupBusy} onClick={() => void handleRunBackup(schedule.id)}
                           >
                             <RefreshCw className="h-4 w-4 mr-1" />
                             Run Now
@@ -512,10 +528,11 @@ export default function BackupsPage() {
                               )}
                               {backup.status}
                             </Badge>
+                            {backup.restore_status && backup.restore_status !== 'idle' && <p role="status" className="mt-2 text-xs">Restore: {backup.restore_status}{backup.restore_error ? ` — ${backup.restore_error}` : ''}</p>}
                           </TableCell>
                           <TableCell>
-                            {backup.size
-                              ? `${(backup.size / 1024 / 1024).toFixed(2)} MB`
+                            {backup.file_size
+                              ? `${(backup.file_size / 1024 / 1024).toFixed(2)} MB`
                               : '-'}
                           </TableCell>
                           <TableCell className="text-gray-500">
@@ -527,9 +544,9 @@ export default function BackupsPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => handleRestoreBackup(backup.id)}
+                                  disabled={backup.restore_status === 'pending' || backup.restore_status === 'running'} onClick={() => setRestoreId(backup.id)}
                                 >
-                                  Restore
+                                  {backup.restore_status === 'pending' || backup.restore_status === 'running' ? 'Restoring…' : 'Restore'}
                                 </Button>
                               </div>
                             )}
@@ -546,7 +563,7 @@ export default function BackupsPage() {
           <TabsContent value="exports" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Data Exports</CardTitle>
                     <CardDescription>
@@ -694,8 +711,8 @@ export default function BackupsPage() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {exp.size
-                              ? `${(exp.size / 1024).toFixed(1)} KB`
+                            {exp.file_size
+                              ? `${(exp.file_size / 1024).toFixed(1)} KB`
                               : '-'}
                           </TableCell>
                           <TableCell className="text-gray-500">
@@ -725,7 +742,7 @@ export default function BackupsPage() {
           <TabsContent value="imports" className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Data Imports</CardTitle>
                     <CardDescription>Import data from files</CardDescription>
@@ -775,7 +792,7 @@ export default function BackupsPage() {
                             <div className="text-sm text-yellow-700 dark:text-yellow-300">
                               <p className="font-medium">Important</p>
                               <p>
-                                Importing data will merge with existing records.
+                                Import subscriptions using name, monthly_cost, total_licenses, currency, and billing_cycle columns.
                                 Duplicate entries will be skipped.
                               </p>
                             </div>

@@ -11,6 +11,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
@@ -53,10 +54,16 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = UserCreateSerializer
     permission_classes = [AllowAny]
     
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
+        from users.policies import validate_acceptance, record_acceptance
+        validate_acceptance(request.data)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        record_acceptance(user, 'registration')
+        from users.verification import send_initial_verification
+        transaction.on_commit(lambda: send_initial_verification(user.pk))
         
         # Generate tokens
         refresh = RefreshToken.for_user(user)
@@ -74,7 +81,10 @@ class RegisterWithOrganizationView(generics.CreateAPIView):
     """Register user and create organization"""
     permission_classes = [AllowAny]
     
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
+        from users.policies import validate_acceptance, record_acceptance
+        validate_acceptance(request.data)
         # Create user
         user_data = {
             'email': request.data.get('email'),
@@ -123,8 +133,11 @@ class RegisterWithOrganizationView(generics.CreateAPIView):
         # Assign user to organization as admin
         user.organization = organization
         user.role = admin_role
-        user.is_verified = True
+        user.is_verified = False
         user.save()
+        record_acceptance(user, 'registration')
+        from users.verification import send_initial_verification
+        transaction.on_commit(lambda: send_initial_verification(user.pk))
         
         # Generate tokens
         refresh = RefreshToken.for_user(user)
@@ -143,11 +156,14 @@ class AcceptInvitationView(generics.CreateAPIView):
     """Accept user invitation and create account"""
     permission_classes = [AllowAny]
     
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
+        from users.policies import validate_acceptance, record_acceptance
+        validate_acceptance(request.data)
         token = request.data.get('token')
         
         try:
-            invitation = UserInvitation.objects.get(token=token, status='pending')
+            invitation = UserInvitation.objects.select_for_update().get(token=token, status='pending')
         except UserInvitation.DoesNotExist:
             return Response(
                 {'error': 'Invalid or expired invitation'},
@@ -161,6 +177,12 @@ class AcceptInvitationView(generics.CreateAPIView):
                 {'error': 'Invitation has expired'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        from users.plans import seat_limit
+        organization = Organization.objects.select_for_update().get(pk=invitation.organization_id)
+        limit = seat_limit(organization)
+        if limit is not None and organization.users.filter(is_active=True).count() >= limit:
+            return Response({'error': 'Organization seat limit reached.'}, status=status.HTTP_402_PAYMENT_REQUIRED)
         
         # Create user
         user_data = {
@@ -180,12 +202,14 @@ class AcceptInvitationView(generics.CreateAPIView):
         user.department = invitation.department
         user.team = invitation.team
         user.is_verified = True
+        user.email_verified_at = timezone.now()
         user.save()
         
         # Update invitation
         invitation.status = 'accepted'
         invitation.accepted_at = timezone.now()
         invitation.save()
+        record_acceptance(user, 'invitation')
         
         # Generate tokens
         refresh = RefreshToken.for_user(user)
@@ -205,7 +229,8 @@ class MeView(generics.RetrieveUpdateAPIView):
     
     def get_serializer_class(self):
         if self.request.method == 'PUT' or self.request.method == 'PATCH':
-            return UserUpdateSerializer
+            from users.serializers import ProfileUpdateSerializer
+            return ProfileUpdateSerializer
         return UserSerializer
     
     def get_object(self):
@@ -249,7 +274,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsAdmin]
     
     def get_permissions(self):
-        if self.action == 'current' and self.request.method == 'GET':
+        if self.action in ['current', 'member_options'] and self.request.method == 'GET':
             return [IsAuthenticated(), IsOrgMember()]
         return [IsAuthenticated(), IsAdmin()]
     
@@ -259,6 +284,11 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     def get_object(self):
         return self.request.user.organization
     
+    @action(detail=False, methods=['get'], url_path='member-options')
+    def member_options(self, request):
+        people = User.objects.filter(organization_id=request.user.organization_id, is_active=True).order_by('first_name', 'last_name', 'id')
+        return Response([{'id': str(person.pk), 'first_name': person.first_name, 'last_name': person.last_name, 'full_name': person.full_name} for person in people])
+
     @action(detail=False, methods=['get', 'put', 'patch'])
     def current(self, request):
         """Get or update the current user's organization"""
@@ -349,6 +379,17 @@ class UserViewSet(viewsets.ModelViewSet):
     filterset_fields = ['department', 'team', 'role', 'is_active']
     search_fields = ['email', 'first_name', 'last_name']
     ordering_fields = ['email', 'date_joined', 'last_activity']
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        from users.plans import require_seat_available
+        org = Organization.objects.select_for_update().filter(pk=request.user.organization_id).first()
+        if not org:
+            return Response({'error': 'No organization associated with this account'}, status=400)
+        blocked = require_seat_available(org)
+        if blocked:
+            return blocked
+        return super().create(request, *args, **kwargs)
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -402,10 +443,14 @@ class UserInvitationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return UserInvitation.objects.filter(organization=self.request.user.organization)
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         from users.plans import require_seat_available
 
-        blocked = require_seat_available(request.user.organization)
+        org = Organization.objects.select_for_update().filter(pk=request.user.organization_id).first()
+        if not org:
+            return Response({'error': 'No organization associated with this account'}, status=400)
+        blocked = require_seat_available(org)
         if blocked:
             return blocked
         return super().create(request, *args, **kwargs)

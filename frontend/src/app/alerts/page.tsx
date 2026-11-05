@@ -1,5 +1,6 @@
 'use client';
 
+import { FormMessage } from '@/components/form-message';
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
 import { alertsApi } from '@/lib/services';
@@ -51,6 +52,7 @@ const PRIORITY_COLORS: Record<AlertPriority, string> = {
 export default function AlertsPage() {
   const [renewalAlerts, setRenewalAlerts] = useState<RenewalAlert[]>([]);
   const [budgetAlerts, setBudgetAlerts] = useState<BudgetAlert[]>([]);
+  const [loadError, setLoadError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateBudgetDialog, setShowCreateBudgetDialog] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState<AlertPriority | 'all'>('all');
@@ -64,6 +66,7 @@ export default function AlertsPage() {
 
   async function loadData() {
     setIsLoading(true);
+    setLoadError('');
     try {
       const [renewals, budgets] = await Promise.all([
         alertsApi.listRenewalAlerts(),
@@ -72,6 +75,7 @@ export default function AlertsPage() {
       setRenewalAlerts(renewals.results);
       setBudgetAlerts(budgets.results);
     } catch {
+      setLoadError('Information could not load. Retry to see current records.');
       toast.error('Failed to load alerts');
     } finally {
       setIsLoading(false);
@@ -160,7 +164,7 @@ export default function AlertsPage() {
       <DashboardLayout>
         <div className="space-y-6">
           <Skeleton className="h-10 w-64" />
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -175,8 +179,9 @@ export default function AlertsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {loadError && <div><FormMessage message={loadError} /><Button variant="outline" onClick={() => void loadData()}>Retry loading</Button></div>}
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold">Alerts & Renewals</h1>
             <p className="text-gray-500">
@@ -342,7 +347,7 @@ export default function AlertsPage() {
 
         {/* Tabs */}
         <Tabs defaultValue="renewals">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="renewals">
               Renewals ({upcomingRenewals.length})
             </TabsTrigger>

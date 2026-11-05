@@ -43,7 +43,7 @@ From the repo root: `docker compose up --build`. See the [main README](../README
 
 3. Install dependencies:
    ```bash
-   pip install -r requirements.txt
+   pip install --require-hashes -r requirements.lock
    ```
 
 4. Copy the environment file:

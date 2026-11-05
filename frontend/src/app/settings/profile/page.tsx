@@ -1,5 +1,6 @@
 'use client';
 
+import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
@@ -20,17 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   ArrowLeft,
@@ -78,11 +69,10 @@ interface NotificationSettings {
 
 interface AppearanceSettings {
   theme: 'light' | 'dark' | 'system';
-  compact_mode: boolean;
-  show_cost_in_header: boolean;
 }
 
 export default function ProfilePage() {
+  const { theme, setTheme } = useTheme();
   const { user, loadProfile } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -116,8 +106,6 @@ export default function ProfilePage() {
   
   const [appearanceSettings, setAppearanceSettings] = useState<AppearanceSettings>({
     theme: 'system',
-    compact_mode: false,
-    show_cost_in_header: true,
   });
 
   useEffect(() => {
@@ -136,6 +124,12 @@ export default function ProfilePage() {
       return () => window.clearTimeout(timer);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (theme !== 'light' && theme !== 'dark' && theme !== 'system') return;
+    const timer = window.setTimeout(() => setAppearanceSettings({ theme }), 0);
+    return () => window.clearTimeout(timer);
+  }, [theme]);
 
   const handleSaveProfile = async () => {
     setIsSaving(true);
@@ -160,8 +154,8 @@ export default function ProfilePage() {
       return;
     }
     
-    if (passwordForm.new_password.length < 8) {
-      toast.error('Password must be at least 8 characters');
+    if (passwordForm.new_password.length < 10) {
+      toast.error('Password must be at least 10 characters');
       return;
     }
     
@@ -200,25 +194,16 @@ export default function ProfilePage() {
 
   const handleSaveAppearance = () => {
     // Save to local storage
-    localStorage.setItem('appearance_settings', JSON.stringify(appearanceSettings));
     
-    // Apply theme
-    if (appearanceSettings.theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else if (appearanceSettings.theme === 'light') {
-      document.documentElement.classList.remove('dark');
-    } else {
-      // System preference
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.classList.toggle('dark', prefersDark);
-    }
-    
+    setTheme(appearanceSettings.theme);
+
     toast.success('Appearance settings saved');
   };
 
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) { toast.error('Choose a PNG, JPEG, or WebP image smaller than 2 MB.'); e.target.value = ''; return; }
       setProfileForm({ ...profileForm, avatar: file });
     }
   };
@@ -282,7 +267,7 @@ export default function ProfilePage() {
                 </Avatar>
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/png,image/jpeg,image/webp"
                   id="avatar-upload"
                   className="hidden"
                   onChange={handleAvatarUpload}
@@ -291,6 +276,7 @@ export default function ProfilePage() {
                   size="sm"
                   variant="outline"
                   className="absolute -bottom-2 -right-2 rounded-full h-8 w-8 p-0"
+                  aria-label="Choose profile photo"
                   onClick={() => document.getElementById('avatar-upload')?.click()}
                 >
                   <Upload className="h-3 w-3" />
@@ -309,7 +295,7 @@ export default function ProfilePage() {
 
         {/* Tabs */}
         <Tabs defaultValue="profile">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap justify-start">
             <TabsTrigger value="profile">
               <User className="h-4 w-4 mr-2" />
               Profile
@@ -363,7 +349,7 @@ export default function ProfilePage() {
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
                   <Input
-                    id="email"
+                    id="email" readOnly
                     type="email"
                     value={profileForm.email}
                     disabled
@@ -459,6 +445,7 @@ export default function ProfilePage() {
                       variant="ghost"
                       size="icon"
                       className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                      aria-label={showCurrentPassword ? 'Hide current password' : 'Show current password'}
                       onClick={() => setShowCurrentPassword(!showCurrentPassword)}
                     >
                       {showCurrentPassword ? (
@@ -489,6 +476,7 @@ export default function ProfilePage() {
                       variant="ghost"
                       size="icon"
                       className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8"
+                      aria-label={showNewPassword ? 'Hide new password' : 'Show new password'}
                       onClick={() => setShowNewPassword(!showNewPassword)}
                     >
                       {showNewPassword ? (
@@ -520,10 +508,7 @@ export default function ProfilePage() {
                   <p className="text-sm font-medium mb-2">Password Requirements</p>
                   <ul className="text-sm text-gray-500 space-y-1">
                     {[
-                      { text: 'At least 8 characters', met: passwordForm.new_password.length >= 8 },
-                      { text: 'One uppercase letter', met: /[A-Z]/.test(passwordForm.new_password) },
-                      { text: 'One lowercase letter', met: /[a-z]/.test(passwordForm.new_password) },
-                      { text: 'One number', met: /\d/.test(passwordForm.new_password) },
+                      { text: 'At least 10 characters', met: passwordForm.new_password.length >= 10 },
                       { text: 'Passwords match', met: passwordForm.new_password === passwordForm.confirm_password && passwordForm.new_password.length > 0 },
                     ].map(({ text, met }) => (
                       <li key={text} className="flex items-center gap-2">
@@ -698,46 +683,6 @@ export default function ProfilePage() {
                 
                 <Separator />
                 
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Compact Mode</p>
-                      <p className="text-sm text-gray-500">
-                        Use smaller spacing and font sizes
-                      </p>
-                    </div>
-                    <Switch
-                      checked={appearanceSettings.compact_mode}
-                      onCheckedChange={(checked) =>
-                        setAppearanceSettings({
-                          ...appearanceSettings,
-                          compact_mode: checked,
-                        })
-                      }
-                    />
-                  </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Show Cost in Header</p>
-                      <p className="text-sm text-gray-500">
-                        Display total monthly cost in the navigation bar
-                      </p>
-                    </div>
-                    <Switch
-                      checked={appearanceSettings.show_cost_in_header}
-                      onCheckedChange={(checked) =>
-                        setAppearanceSettings({
-                          ...appearanceSettings,
-                          show_cost_in_header: checked,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                
-                <Separator />
-                
                 <Button onClick={handleSaveAppearance}>
                   <Save className="h-4 w-4 mr-2" />
                   Save Appearance
@@ -752,30 +697,12 @@ export default function ProfilePage() {
           <CardHeader>
             <CardTitle className="text-red-600">Danger Zone</CardTitle>
             <CardDescription>
-              Irreversible actions for your account
+              Account closure and data requests
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive">Delete Account</Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This action cannot be undone. This will permanently delete your
-                    account and remove all your data from our servers.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction className="bg-red-600 hover:bg-red-700">
-                    Delete Account
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <p className="mb-4 text-sm leading-6 text-muted-foreground">To close an account or delete workspace data, follow the data request process. Export anything you need first. Organization deletion requires an admin request.</p>
+            <Button variant="outline" asChild><Link href="/data">Request account or data deletion</Link></Button>
           </CardContent>
         </Card>
       </div>

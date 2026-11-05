@@ -17,6 +17,9 @@ from users.billing import (
     BillingStatusView, CreateCheckoutSessionView,
     CreateBillingPortalSessionView, StripeWebhookView,
 )
+from users.verification import VerificationRequestView, VerificationConfirmView
+from users.policy_views import PolicyAcceptanceView, PolicyVersionsView
+from users.social_views import SocialExchangeView, StartOrganizationView
 
 router = DefaultRouter()
 router.register(r'organizations', OrganizationViewSet, basename='organization')
@@ -29,6 +32,12 @@ router.register(r'audit-logs', AuditLogViewSet, basename='audit-log')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
+    path('verification/request/', VerificationRequestView.as_view(), name='verification-request'),
+    path('verification/confirm/', VerificationConfirmView.as_view(), name='verification-confirm'),
+    path('policies/', PolicyVersionsView.as_view(), name='policy-versions'),
+    path('agreements/', PolicyAcceptanceView.as_view(), name='policy-acceptance'),
+    path('social/exchange/', SocialExchangeView.as_view(), name='social-exchange'),
+    path('organization/start/', StartOrganizationView.as_view(), name='organization-start'),
     # JWT Token endpoints
     path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

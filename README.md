@@ -12,8 +12,17 @@ SaaS app for discovering, tracking, and cutting wasted software subscriptions. D
 ## Quick start with Docker
 
 ```bash
+python deploy/bootstrap_env.py
 docker compose up --build
 ```
+
+The bootstrap creates gitignored local environment files and the root `.env`
+needed for Compose's `ENCRYPTION_KEY` interpolation. It preserves existing keys,
+database passwords, and provider credentials. Run it with Python before your
+first Compose start; do not regenerate keys for data already encrypted.
+`backend/.env` is loaded by local Django commands; it does not supply Compose's
+root-level interpolation variables. The generated `.env.prod` is for local smoke
+checks only and must be configured for HTTPS before a public deployment.
 
 Then open [http://localhost:3000](http://localhost:3000). API: [http://localhost:8000/api/docs/](http://localhost:8000/api/docs/). Health: [http://localhost:8000/api/v1/health/](http://localhost:8000/api/v1/health/).
 
@@ -27,7 +36,7 @@ Copy `backend/.env.example` to `backend/.env` if you want OAuth, Stripe, or Plai
 cd backend
 python -m venv venv
 venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 copy .env.example .env         # macOS/Linux: cp .env.example .env
 python manage.py migrate
 python manage.py runserver
@@ -45,7 +54,27 @@ Tests use SQLite and in-memory cache automatically:
 python manage.py test
 ```
 
+For deterministic tests without local provider credentials and with a faster,
+test-only password hasher (also used in CI):
+
+```bash
+python manage.py test --settings=backend.test_settings
+```
+
+The authentication suite includes a separate smoke test with the production
+PBKDF2 password hasher. Test-only settings must never be used to run the service.
+
+`backend/requirements.txt` contains dependency constraints; the hashed
+`backend/requirements.lock` is used by local setup, Docker, and CI. Regenerate it
+after intentional dependency changes with:
+
+```bash
+uv pip compile backend/requirements.txt --python-version 3.12 --universal --generate-hashes --output-file backend/requirements.lock
+```
+
 ### Frontend
+
+Use Node.js 24 LTS (also used by Docker and CI; see `frontend/.nvmrc`).
 
 ```bash
 cd frontend
@@ -90,6 +119,15 @@ Stripe webhook: `http://localhost:8000/api/v1/auth/billing/webhook/`
 - Stripe Checkout for Pro (when price IDs are set)
 
 Still coming later: Microsoft Teams notifications, QuickBooks, Xero, and other accounting/HR connectors.
+
+## Release validation
+
+See `deploy/RUNBOOK.md` for proxy setup, database migrations, backups, and release
+checks. Public frontend builds also need `NEXT_PUBLIC_APP_URL` and
+`NEXT_PUBLIC_INDEXABLE=true`; keep indexing disabled on staging.
+Paid Checkout uses card payments and requires complete Stripe key, webhook, and
+Pro price configuration. MFA accounts sign in with email, password, and a current
+authenticator code; social sign-in cannot bypass this requirement.
 
 ## License
 

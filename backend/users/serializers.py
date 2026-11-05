@@ -3,7 +3,8 @@ User serializers for Subscription Waste Manager
 """
 
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from api.serializers import OrganizationModelSerializer
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenObtainSerializer, TokenRefreshSerializer
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from users.models import (
@@ -14,6 +15,37 @@ from users.models import (
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """Custom JWT token serializer with additional claims"""
+
+    otp = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    def validate(self, attrs):
+        from django.contrib.auth.models import update_last_login
+        from django.db import transaction
+        from rest_framework.exceptions import AuthenticationFailed
+        from rest_framework_simplejwt.settings import api_settings
+        import pyotp
+
+        # Authenticate the password before issuing any tokens.
+        data = TokenObtainSerializer.validate(self, attrs)
+        with transaction.atomic():
+            devices = list(self.user.mfa_devices.select_for_update().filter(device_type='totp', is_verified=True))
+            if devices:
+                now = timezone.now()
+                step_start = int(now.timestamp()) // 30 * 30
+                for device in devices:
+                    if (not device.last_used or device.last_used.timestamp() < step_start) and pyotp.TOTP(device.secret).verify(attrs.get('otp', ''), for_time=now.timestamp()):
+                        device.last_used = now
+                        device.save(update_fields=['last_used'])
+                        break
+                else:
+                    raise AuthenticationFailed('Enter a valid, unused authenticator code.', code='mfa_required')
+            refresh = self.get_token(self.user)
+            refresh['mfa'] = bool(devices)
+            data['refresh'] = str(refresh)
+            data['access'] = str(refresh.access_token)
+        if api_settings.UPDATE_LAST_LOGIN:
+            update_last_login(None, self.user)
+        return data
     
     @classmethod
     def get_token(cls, user):
@@ -31,7 +63,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
 
-class OrganizationSerializer(serializers.ModelSerializer):
+class SecureTokenRefreshSerializer(TokenRefreshSerializer):
+    """Apply password-revocation and MFA rules before rotating a refresh token."""
+
+    def validate(self, attrs):
+        from users.authentication import MFAJWTAuthentication
+        refresh = self.token_class(attrs['refresh'])
+        MFAJWTAuthentication().get_user(refresh)
+        return super().validate(attrs)
+
+
+class OrganizationSerializer(OrganizationModelSerializer):
     """Organization serializer"""
     
     user_count = serializers.SerializerMethodField()
@@ -46,7 +88,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'slug', 'plan', 'is_on_trial', 'is_enterprise', 'created_at', 'updated_at',
+            'id', 'slug', 'plan', 'trial_ends_at', 'is_on_trial', 'is_enterprise', 'created_at', 'updated_at',
         ]
     
     def get_user_count(self, obj):
@@ -64,7 +106,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class OrganizationCreateSerializer(serializers.ModelSerializer):
+class OrganizationCreateSerializer(OrganizationModelSerializer):
     """Serializer for creating organizations"""
     
     class Meta:
@@ -89,7 +131,7 @@ class OrganizationCreateSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class DepartmentSerializer(serializers.ModelSerializer):
+class DepartmentSerializer(OrganizationModelSerializer):
     """Department serializer"""
     
     user_count = serializers.SerializerMethodField()
@@ -118,7 +160,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
         )['total'] or 0
 
 
-class TeamSerializer(serializers.ModelSerializer):
+class TeamSerializer(OrganizationModelSerializer):
     """Team serializer"""
     
     department_name = serializers.CharField(source='department.name', read_only=True)
@@ -136,7 +178,7 @@ class TeamSerializer(serializers.ModelSerializer):
         return obj.users.filter(is_active=True).count()
 
 
-class RoleSerializer(serializers.ModelSerializer):
+class RoleSerializer(OrganizationModelSerializer):
     """Role serializer"""
     
     class Meta:
@@ -148,10 +190,22 @@ class RoleSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'is_system_role', 'created_at', 'updated_at']
 
 
-class UserSerializer(serializers.ModelSerializer):
+class UserSerializer(OrganizationModelSerializer):
     """User serializer"""
     
     organization_name = serializers.CharField(source='organization.name', read_only=True)
+    agreements_required = serializers.SerializerMethodField()
+
+    def get_agreements_required(self, obj):
+        from users.policies import agreements_required
+        return agreements_required(obj)
+    email_verified = serializers.SerializerMethodField()
+    email_verification_required = serializers.SerializerMethodField()
+    def get_email_verified(self, obj):
+        return bool(obj.email_verified_at)
+    def get_email_verification_required(self, obj):
+        from users.verification import verification_required
+        return bool(verification_required(obj))
     department_name = serializers.CharField(source='department.name', read_only=True)
     team_name = serializers.CharField(source='team.name', read_only=True)
     role_name = serializers.CharField(source='role.name', read_only=True)
@@ -166,7 +220,7 @@ class UserSerializer(serializers.ModelSerializer):
             'department', 'department_name',
             'team', 'team_name',
             'role', 'role_name', 'role_type',
-            'is_active', 'is_verified', 'is_admin', 'is_finance',
+            'is_active', 'is_verified', 'email_verified', 'email_verification_required', 'is_admin', 'is_finance', 'agreements_required',
             'timezone', 'language', 'notification_preferences',
             'last_activity', 'date_joined', 'updated_at'
         ]
@@ -176,7 +230,7 @@ class UserSerializer(serializers.ModelSerializer):
         ]
 
 
-class UserCreateSerializer(serializers.ModelSerializer):
+class UserCreateSerializer(OrganizationModelSerializer):
     """Serializer for creating users"""
     
     password = serializers.CharField(write_only=True, validators=[validate_password])
@@ -201,7 +255,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         return user
 
 
-class UserUpdateSerializer(serializers.ModelSerializer):
+class UserUpdateSerializer(OrganizationModelSerializer):
     """Serializer for updating users"""
     
     class Meta:
@@ -213,7 +267,32 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         ]
 
 
-class UserInvitationSerializer(serializers.ModelSerializer):
+class ProfileUpdateSerializer(OrganizationModelSerializer):
+    """Self-service profile changes cannot modify authorization or membership."""
+
+    def validate_avatar(self, value):
+        if value is None:
+            return value
+        if value.size > 2 * 1024 * 1024:
+            raise serializers.ValidationError('Choose an image smaller than 2 MB.')
+        image_format = getattr(value, 'image', None)
+        image_format = getattr(image_format, 'format', '')
+        extensions = {'PNG': 'png', 'JPEG': 'jpg', 'WEBP': 'webp'}
+        if image_format not in extensions:
+            raise serializers.ValidationError('Use a PNG, JPEG, or WebP image.')
+        import uuid
+        value.name = f'{uuid.uuid4().hex}.{extensions[image_format]}'
+        return value
+
+    class Meta:
+        model = User
+        fields = [
+            'first_name', 'last_name', 'avatar', 'phone', 'job_title',
+            'timezone', 'language', 'notification_preferences',
+        ]
+
+
+class UserInvitationSerializer(OrganizationModelSerializer):
     """User invitation serializer"""
     
     invited_by_name = serializers.CharField(source='invited_by.full_name', read_only=True)
@@ -229,7 +308,7 @@ class UserInvitationSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'invited_by', 'status', 'expires_at', 'is_expired', 'created_at']
 
 
-class UserInvitationCreateSerializer(serializers.ModelSerializer):
+class UserInvitationCreateSerializer(OrganizationModelSerializer):
     """Serializer for creating user invitations"""
     
     class Meta:
@@ -279,7 +358,7 @@ class ChangePasswordSerializer(serializers.Serializer):
         return value
 
 
-class AuditLogSerializer(serializers.ModelSerializer):
+class AuditLogSerializer(OrganizationModelSerializer):
     """Audit log serializer"""
     
     user_email = serializers.CharField(source='user.email', read_only=True)
@@ -296,7 +375,7 @@ class AuditLogSerializer(serializers.ModelSerializer):
         read_only_fields = '__all__'
 
 
-class NotificationSerializer(serializers.ModelSerializer):
+class NotificationSerializer(OrganizationModelSerializer):
     """Notification serializer"""
     
     class Meta:

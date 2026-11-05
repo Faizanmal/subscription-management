@@ -32,8 +32,17 @@ class BackupScheduleViewSet(viewsets.ModelViewSet):
         )
     
     def perform_create(self, serializer):
-        serializer.save(organization=self.request.user.organization)
+        schedule = serializer.save(organization=self.request.user.organization)
+        from backups.tasks import calculate_next_run
+        schedule.next_backup = calculate_next_run(schedule)
+        schedule.save(update_fields=['next_backup'])
     
+    def perform_update(self, serializer):
+        schedule = serializer.save()
+        from backups.tasks import calculate_next_run
+        schedule.next_backup = calculate_next_run(schedule) if schedule.is_active else None
+        schedule.save(update_fields=['next_backup'])
+
     @action(detail=True, methods=['post'])
     def run_now(self, request, pk=None):
         """Trigger immediate backup"""
@@ -41,7 +50,7 @@ class BackupScheduleViewSet(viewsets.ModelViewSet):
         
         # Create backup record
         backup = Backup.objects.create(
-            schedule=schedule,
+            schedule=schedule, organization=request.user.organization, name=f'Workspace snapshot {timezone.now().isoformat()}', triggered_by='manual', triggered_by_user=request.user,
             status='pending',
             started_at=timezone.now()
         )
@@ -64,7 +73,7 @@ class BackupViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         return Backup.objects.filter(
-            schedule__organization=self.request.user.organization
+            organization=self.request.user.organization
         ).select_related('schedule').order_by('-created_at')
     
     @action(detail=False, methods=['post'])
@@ -78,21 +87,17 @@ class BackupViewSet(viewsets.ReadOnlyModelViewSet):
             organization=request.user.organization,
             name='Manual Backups',
             defaults={
-                'frequency': 'manual',
+                'frequency': 'daily', 'schedule_time': '02:00',
                 'is_active': False,
                 'retention_days': 30
             }
         )
         
         backup = Backup.objects.create(
-            schedule=schedule,
+            schedule=schedule, organization=request.user.organization, name=f'Workspace snapshot {timezone.now().isoformat()}', triggered_by='manual', triggered_by_user=request.user,
             status='pending',
             started_at=timezone.now(),
-            metadata={
-                'include_attachments': serializer.validated_data.get('include_attachments', True),
-                'description': serializer.validated_data.get('description', ''),
-                'triggered_by': str(request.user.id)
-            }
+
         )
         
         # Trigger async backup task
@@ -125,10 +130,11 @@ class BackupViewSet(viewsets.ReadOnlyModelViewSet):
         from security.models import DataAccessLog
         DataAccessLog.objects.create(
             user=request.user,
-            action='export',
+            organization=request.user.organization,
+            access_type='export',
             resource_type='Backup',
             resource_id=str(backup.id),
-            resource_details={'file_path': backup.file_path},
+            details={'file_path': backup.file_path},
             ip_address=request.META.get('REMOTE_ADDR'),
             user_agent=request.META.get('HTTP_USER_AGENT', '')
         )
@@ -156,6 +162,11 @@ class BackupViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        if backup.restore_status in ['pending', 'running']:
+            return Response({'error': 'A restore is already in progress.'}, status=409)
+        backup.restore_status = 'pending'
+        backup.restore_error = ''
+        backup.save(update_fields=['restore_status', 'restore_error'])
         # Trigger async restore task
         from backups.tasks import restore_backup
         result = restore_backup.delay(
@@ -272,10 +283,11 @@ class DataExportViewSet(viewsets.ModelViewSet):
         from security.models import DataAccessLog
         DataAccessLog.objects.create(
             user=request.user,
-            action='export',
+            organization=request.user.organization,
+            access_type='export',
             resource_type='DataExport',
             resource_id=str(export.id),
-            resource_details={'format': export.format},
+            details={'format': export.format},
             ip_address=request.META.get('REMOTE_ADDR'),
             user_agent=request.META.get('HTTP_USER_AGENT', '')
         )
@@ -299,128 +311,20 @@ class DataExportViewSet(viewsets.ModelViewSet):
         return response
 
 
-class ImportJobViewSet(viewsets.ModelViewSet):
-    """ViewSet for import jobs"""
-    
+class ImportJobViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ImportJobSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdmin]
-    
     def get_queryset(self):
-        return ImportJob.objects.filter(
-            organization=self.request.user.organization
-        ).select_related('uploaded_by').order_by('-created_at')
-    
+        return ImportJob.objects.filter(organization=self.request.user.organization).order_by('-created_at')
     def create(self, request, *args, **kwargs):
         serializer = ImportJobCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        uploaded_file = serializer.validated_data['file']
-        
-        # Save file temporarily
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as f:
-            for chunk in uploaded_file.chunks():
-                f.write(chunk)
-            temp_path = f.name
-        
-        import_job = ImportJob.objects.create(
-            organization=request.user.organization,
-            uploaded_by=request.user,
-            file_name=uploaded_file.name,
-            file_size=uploaded_file.size,
-            import_type=serializer.validated_data['import_type'],
-            mapping=serializer.validated_data.get('mapping', {}),
-            status='pending'
-        )
-        
-        # Store temp path in metadata
-        import_job.metadata = {'temp_path': temp_path}
-        import_job.save()
-        
-        # Trigger async import task
+        uploaded = serializer.validated_data['file']
+        job = ImportJob.objects.create(organization=request.user.organization, initiated_by=request.user, source_file=uploaded, source_file_name=uploaded.name, file_size=uploaded.size, import_type=serializer.validated_data['import_type'], column_mapping=serializer.validated_data.get('mapping', {}), can_rollback=False)
         from backups.tasks import run_import_job
-        run_import_job.delay(str(import_job.id))
-        
-        response_serializer = ImportJobSerializer(import_job)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-    
-    @action(detail=True, methods=['get'])
-    def preview(self, request, pk=None):
-        """Preview import data"""
-        import_job = self.get_object()
-        
-        if import_job.status not in ['pending', 'validating']:
-            return Response(
-                {'error': 'Cannot preview after import has started'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Parse and return preview data
-        from backups.utils import parse_import_file
-        
-        temp_path = import_job.metadata.get('temp_path') if import_job.metadata else None
-        if not temp_path or not os.path.exists(temp_path):
-            return Response(
-                {'error': 'Import file not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        try:
-            preview_data = parse_import_file(
-                temp_path,
-                import_job.import_type,
-                limit=10
-            )
-            return Response(preview_data)
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-    
-    @action(detail=True, methods=['post'])
-    def start(self, request, pk=None):
-        """Start import job after preview/mapping"""
-        import_job = self.get_object()
-        
-        if import_job.status != 'pending':
-            return Response(
-                {'error': 'Import already started'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Update mapping if provided
-        if 'mapping' in request.data:
-            import_job.mapping = request.data['mapping']
-            import_job.save()
-        
-        # Start import
-        from backups.tasks import run_import_job
-        run_import_job.delay(str(import_job.id))
-        
-        return Response({'message': 'Import started'})
-    
-    @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
-        """Cancel import job"""
-        import_job = self.get_object()
-        
-        if import_job.status not in ['pending', 'validating', 'processing']:
-            return Response(
-                {'error': 'Cannot cancel completed import'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        import_job.status = 'cancelled'
-        import_job.save()
-        
-        # Clean up temp file
-        if import_job.metadata and 'temp_path' in import_job.metadata:
-            temp_path = import_job.metadata['temp_path']
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        
-        return Response({'message': 'Import cancelled'})
+        run_import_job.delay(str(job.pk))
+        job.refresh_from_db()
+        return Response(ImportJobSerializer(job).data, status=status.HTTP_201_CREATED)
 
 
 class DataRetentionView(APIView):

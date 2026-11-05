@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
+import { useOwnerOptions } from '@/lib/use-owner-options';
 import { DashboardLayout } from '@/components/layouts/dashboard-layout';
-import { useSubscriptionsStore, useOrganizationStore } from '@/lib/stores';
+import { useSubscriptionsStore } from '@/lib/stores';
 import { vendorsApi } from '@/lib/services';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -88,7 +89,7 @@ export default function EditSubscriptionPage() {
   const subscriptionId = params.id as string;
   
   const { currentSubscription, fetchSubscription, updateSubscription, deleteSubscription, isLoading } = useSubscriptionsStore();
-  const { members } = useOrganizationStore();
+  const { members, error: ownerError, loading: ownersLoading, reload: reloadOwners } = useOwnerOptions();
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -650,6 +651,8 @@ export default function EditSubscriptionPage() {
                 {/* Owner */}
                 <div className="space-y-2">
                   <Label>Owner</Label>
+                  {ownerError && <p role="alert" className="text-sm text-destructive">{ownerError} <button type="button" className="underline" onClick={() => void reloadOwners()}>Retry owners</button></p>}
+                  {ownersLoading && <p role="status" className="text-xs text-muted-foreground">Loading owners…</p>}
                   <Select
                     value={formData.owner_id || 'unassigned'}
                     onValueChange={(v) =>
@@ -663,7 +666,7 @@ export default function EditSubscriptionPage() {
                       <SelectItem value="unassigned">Unassigned</SelectItem>
                       {members.map((member) => (
                         <SelectItem key={member.id} value={member.id}>
-                          {member.first_name} {member.last_name}
+                          {member.full_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
