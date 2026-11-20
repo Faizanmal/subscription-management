@@ -20,8 +20,10 @@ from users.billing import (
 from users.verification import VerificationRequestView, VerificationConfirmView
 from users.policy_views import PolicyAcceptanceView, PolicyVersionsView
 from users.social_views import SocialExchangeView, StartOrganizationView
+from users.closure import ClosureRequestViewSet
 
 router = DefaultRouter()
+router.register(r'closure-requests', ClosureRequestViewSet, basename='closure-request')
 router.register(r'organizations', OrganizationViewSet, basename='organization')
 router.register(r'departments', DepartmentViewSet, basename='department')
 router.register(r'teams', TeamViewSet, basename='team')

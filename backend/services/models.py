@@ -8,6 +8,7 @@ from decimal import Decimal
 from django.db import models
 from django.utils import timezone
 from users.models import Organization, Department, Team, User
+from services.money import WorkspaceMoneyMixin
 
 
 class SoftwareVendor(models.Model):
@@ -72,7 +73,7 @@ class SoftwareVendor(models.Model):
         super().save(*args, **kwargs)
 
 
-class Subscription(models.Model):
+class Subscription(WorkspaceMoneyMixin, models.Model):
     """Software subscription tracked by the organization"""
     
     class Status(models.TextChoices):
@@ -120,7 +121,7 @@ class Subscription(models.Model):
     
     # Cost
     cost_per_unit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    currency = models.CharField(max_length=3, default='USD')
+    currency = models.CharField(max_length=3, default='', blank=True)
     billing_cycle = models.CharField(max_length=20, choices=BillingCycle.choices, default=BillingCycle.MONTHLY)
     
     # Licenses
@@ -132,6 +133,7 @@ class Subscription(models.Model):
     end_date = models.DateField(null=True, blank=True)
     renewal_date = models.DateField(null=True, blank=True)
     auto_renew = models.BooleanField(default=True)
+    cancellation_notice_days = models.PositiveIntegerField(default=0)
     
     # Contract details
     contract_id = models.CharField(max_length=255, blank=True, null=True)
@@ -165,14 +167,14 @@ class Subscription(models.Model):
     @property
     def monthly_cost(self):
         """Calculate monthly cost regardless of billing cycle"""
-        multipliers = {
+        divisors = {
             'monthly': 1,
-            'quarterly': Decimal('0.333333'),
-            'semi_annual': Decimal('0.166667'),
-            'annual': Decimal('0.083333'),
+            'quarterly': 3,
+            'semi_annual': 6,
+            'annual': 12,
             'custom': 1,
         }
-        return self.cost_per_unit * self.total_licenses * multipliers.get(self.billing_cycle, 1)
+        return Decimal(str(self.cost_per_unit)) * self.total_licenses / divisors.get(self.billing_cycle, 1)
     
     @property
     def annual_cost(self):
@@ -197,9 +199,26 @@ class Subscription(models.Model):
         return delta.days
 
     @property
+    def cancel_by_date(self):
+        if not self.renewal_date:
+            return None
+        return self.renewal_date - timezone.timedelta(days=self.cancellation_notice_days)
+
+    @property
     def last_usage_at(self):
         latest = self.subscription_users.order_by('-last_used').values_list('last_used', flat=True).first()
         return latest
+
+
+class RenewalReminder(models.Model):
+    subscription = models.ForeignKey(Subscription, on_delete=models.CASCADE, related_name='renewal_reminders')
+    deadline = models.DateField()
+    kind = models.CharField(max_length=20)
+    threshold = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['subscription', 'deadline', 'kind', 'threshold'], name='unique_renewal_reminder')]
 
 
 class SubscriptionUser(models.Model):
@@ -314,7 +333,7 @@ class UsageMetrics(models.Model):
         ordering = ['-period_start']
 
 
-class CostRecord(models.Model):
+class CostRecord(WorkspaceMoneyMixin, models.Model):
     """Historical cost records for subscriptions"""
     
     class RecordType(models.TextChoices):
@@ -330,7 +349,7 @@ class CostRecord(models.Model):
     
     record_type = models.CharField(max_length=20, choices=RecordType.choices)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
-    currency = models.CharField(max_length=3, default='USD')
+    currency = models.CharField(max_length=3, default='', blank=True)
     
     # Date range this covers
     period_start = models.DateField()
@@ -360,7 +379,7 @@ class CostRecord(models.Model):
         ]
 
 
-class RedundancyGroup(models.Model):
+class RedundancyGroup(WorkspaceMoneyMixin, models.Model):
     """Groups of subscriptions with overlapping functionality"""
     
     class Status(models.TextChoices):
@@ -383,7 +402,7 @@ class RedundancyGroup(models.Model):
     overlap_score = models.FloatField(default=0, help_text="0-100 overlap percentage")
     overlapping_features = models.JSONField(default=list, blank=True)
     potential_savings = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    currency = models.CharField(max_length=3, default='USD')
+    currency = models.CharField(max_length=3, default='', blank=True)
     
     # Recommendation
     recommended_action = models.TextField(blank=True)
@@ -422,7 +441,7 @@ class RedundancyGroupMember(models.Model):
         unique_together = ['group', 'subscription']
 
 
-class Recommendation(models.Model):
+class Recommendation(WorkspaceMoneyMixin, models.Model):
     """AI-generated recommendations for cost optimization"""
     
     class Type(models.TextChoices):
@@ -467,8 +486,13 @@ class Recommendation(models.Model):
     # Financial impact
     estimated_savings = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     savings_period = models.CharField(max_length=20, default='annual')
-    currency = models.CharField(max_length=3, default='USD')
+    currency = models.CharField(max_length=3, default='', blank=True)
     confidence_score = models.FloatField(default=0, help_text="AI confidence 0-100")
+    confirmed_savings = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    savings_effective_date = models.DateField(null=True, blank=True)
+    savings_evidence = models.TextField(blank=True)
+    savings_confirmed_at = models.DateTimeField(null=True, blank=True)
+    savings_confirmed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='confirmed_recommendations')
     
     # Action details
     action_items = models.JSONField(default=list, blank=True)
@@ -501,7 +525,7 @@ class Recommendation(models.Model):
         return f"{self.title}"
 
 
-class Alert(models.Model):
+class Alert(WorkspaceMoneyMixin, models.Model):
     """System alerts for renewals, budget overages, etc."""
     
     class AlertType(models.TextChoices):
@@ -546,7 +570,7 @@ class Alert(models.Model):
     
     # Financial context
     financial_impact = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    currency = models.CharField(max_length=3, default='USD')
+    currency = models.CharField(max_length=3, default='', blank=True)
     
     # Trigger details
     trigger_date = models.DateField(null=True, blank=True)
@@ -576,7 +600,7 @@ class Alert(models.Model):
         return f"{self.title}"
 
 
-class Workflow(models.Model):
+class Workflow(WorkspaceMoneyMixin, models.Model):
     """Approval workflows for subscription changes"""
     
     class WorkflowType(models.TextChoices):
@@ -613,7 +637,7 @@ class Workflow(models.Model):
     
     # Financial impact
     financial_impact = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    currency = models.CharField(max_length=3, default='USD')
+    currency = models.CharField(max_length=3, default='', blank=True)
     
     # Workflow tracking
     requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='requested_workflows')
@@ -668,7 +692,7 @@ class WorkflowStep(models.Model):
         unique_together = ['workflow', 'step_order']
 
 
-class SavingsReport(models.Model):
+class SavingsReport(WorkspaceMoneyMixin, models.Model):
     """Historical savings reports"""
     
     class Period(models.TextChoices):
@@ -687,7 +711,9 @@ class SavingsReport(models.Model):
     total_spend = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     optimized_spend = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total_savings = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    currency = models.CharField(max_length=3, default='USD')
+    monthly_run_rate = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    spend_basis = models.CharField(max_length=30, default='recorded_costs')
+    currency = models.CharField(max_length=3, default='', blank=True)
     
     # Breakdown
     savings_by_type = models.JSONField(default=dict, blank=True)
@@ -711,7 +737,7 @@ class SavingsReport(models.Model):
         unique_together = ['organization', 'period', 'period_start']
 
 
-class BudgetTarget(models.Model):
+class BudgetTarget(WorkspaceMoneyMixin, models.Model):
     """Budget targets for departments/teams"""
     
     class Period(models.TextChoices):
@@ -726,7 +752,7 @@ class BudgetTarget(models.Model):
     
     period = models.CharField(max_length=20, choices=Period.choices)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
-    currency = models.CharField(max_length=3, default='USD')
+    currency = models.CharField(max_length=3, default='', blank=True)
     
     # Alert thresholds (percentages)
     warning_threshold = models.IntegerField(default=80)

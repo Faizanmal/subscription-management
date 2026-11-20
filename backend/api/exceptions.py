@@ -14,6 +14,10 @@ logger = logging.getLogger('swm')
 def custom_exception_handler(exc, context):
     """Custom exception handler with logging"""
     
+    from django.core.exceptions import ValidationError as DjangoValidationError
+    from rest_framework.exceptions import ValidationError
+    if isinstance(exc, DjangoValidationError):
+        exc = ValidationError(getattr(exc, 'message_dict', None) or exc.messages)
     # Call REST framework's default exception handler first
     response = exception_handler(exc, context)
     

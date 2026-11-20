@@ -154,10 +154,8 @@ class DepartmentSerializer(OrganizationModelSerializer):
         return obj.subscriptions.filter(status='active').count()
     
     def get_current_spend(self, obj):
-        from django.db.models import Sum
-        return obj.subscriptions.filter(status='active').aggregate(
-            total=Sum('cost_per_unit')
-        )['total'] or 0
+        from services.money import monthly_total
+        return monthly_total(obj.subscriptions.filter(status='active'), obj.organization)
 
 
 class TeamSerializer(OrganizationModelSerializer):

@@ -7,6 +7,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
+from django.db import transaction
+from services.money import monthly_total, potential_total, confirmed_total, checked_rows, annual_estimate, ZERO
 from django.db.models import Sum, Count, F, Q
 from django.db.models.functions import TruncMonth
 from django_filters.rest_framework import DjangoFilterBackend
@@ -100,7 +102,7 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset()
         active = queryset.filter(status='active')
         
-        total_monthly = sum(s.monthly_cost for s in active)
+        total_monthly = monthly_total(active, request.user.organization)
         total_licenses = active.aggregate(total=Sum('total_licenses'))['total'] or 0
         used_licenses = active.aggregate(total=Sum('used_licenses'))['total'] or 0
         
@@ -328,15 +330,22 @@ class RecommendationViewSet(viewsets.ModelViewSet):
             organization=self.request.user.organization
         ).select_related('subscription', 'reviewed_by')
     
+    def perform_create(self, serializer):
+        serializer.save(organization=self.request.user.organization)
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError
+        if instance.savings_confirmed_at:
+            raise ValidationError('Confirmed savings records cannot be deleted.')
+        instance.delete()
+
     @action(detail=False, methods=['get'])
     def summary(self, request):
         """Get recommendation summary"""
         queryset = self.get_queryset()
         pending = queryset.filter(status='pending')
         
-        total_potential_savings = pending.aggregate(
-            total=Sum('estimated_savings')
-        )['total'] or 0
+        total_potential_savings = potential_total(pending, request.user.organization)
         
         by_type = pending.values('type').annotate(
             count=Count('id'),
@@ -441,11 +450,30 @@ class RecommendationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def implement(self, request, pk=None):
-        recommendation = self.get_object()
-        recommendation.status = 'completed'
-        recommendation.reviewed_by = request.user
-        recommendation.reviewed_at = timezone.now()
-        recommendation.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'updated_at'])
+        from services.serializers import SavingsConfirmationSerializer
+        from users.models import AuditLog
+        from rest_framework.exceptions import ValidationError
+        if not request.user.is_finance:
+            return Response({'error': 'Only admins and finance members can confirm savings.'}, status=403)
+        data = SavingsConfirmationSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        with transaction.atomic():
+            recommendation = self.get_queryset().select_for_update().get(pk=self.get_object().pk)
+            if recommendation.savings_confirmed_at:
+                if any(getattr(recommendation, key) != value for key, value in data.validated_data.items()):
+                    raise ValidationError('Savings are already confirmed. This record cannot be overwritten.')
+                return Response(self.get_serializer(recommendation).data)
+            if recommendation.status not in ('approved', 'in_progress', 'completed'):
+                raise ValidationError('Approve the recommendation before confirming savings.')
+            for key, value in data.validated_data.items():
+                setattr(recommendation, key, value)
+            recommendation.status = 'completed'
+            recommendation.savings_confirmed_by = request.user
+            recommendation.savings_confirmed_at = timezone.now()
+            recommendation.save()
+            AuditLog.objects.create(organization=request.user.organization, user=request.user,
+                action='savings.confirmed', resource_type='recommendation', resource_id=str(recommendation.pk),
+                new_values={key: str(value) for key, value in data.validated_data.items()})
         return Response(self.get_serializer(recommendation).data)
 
     @action(detail=False, methods=['get'], url_path='quick-wins')
@@ -459,18 +487,18 @@ class RecommendationViewSet(viewsets.ModelViewSet):
     def savings_summary(self, request):
         qs = self.get_queryset()
 
-        total_potential = qs.filter(status='pending').aggregate(total=Sum('estimated_savings'))['total'] or 0
-        implemented = qs.filter(status='implemented').aggregate(total=Sum('estimated_savings'))['total'] or 0
-        by_type = qs.filter(status='pending').values('type').annotate(
-            count=Count('id'),
-            savings=Sum('estimated_savings')
-        ).order_by('-savings')
-
-        return Response({
-            'total_potential': total_potential,
-            'implemented': implemented,
-            'by_type': list(by_type),
-        })
+        org = request.user.organization
+        pending = checked_rows(qs.filter(status='pending'), org)
+        completed = qs.filter(status='completed', savings_confirmed_at__isnull=False)
+        by_type = {}
+        for rec in pending:
+            item = by_type.setdefault(rec.type, {'type': rec.type, 'count': 0, 'savings': ZERO})
+            item['count'] += 1
+            item['savings'] += annual_estimate(rec)
+        return Response({'total_potential': potential_total(pending, org),
+                         'implemented': confirmed_total(completed, org),
+                         'currency': org.default_currency, 'potential_period': 'annual',
+                         'by_type': list(by_type.values())})
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
@@ -827,7 +855,7 @@ class DashboardView(generics.GenericAPIView):
         active_subs = subscriptions.filter(status='active')
         
         # Calculate totals
-        total_monthly = sum(s.monthly_cost for s in active_subs)
+        total_monthly = monthly_total(active_subs, org)
         total_licenses = active_subs.aggregate(total=Sum('total_licenses'))['total'] or 0
         used_licenses = active_subs.aggregate(total=Sum('used_licenses'))['total'] or 0
         
@@ -841,9 +869,7 @@ class DashboardView(generics.GenericAPIView):
             organization=org, status='pending'
         ).count()
         
-        potential_savings = Recommendation.objects.filter(
-            organization=org, status='pending'
-        ).aggregate(total=Sum('estimated_savings'))['total'] or 0
+        potential_savings = potential_total(Recommendation.objects.filter(organization=org, status='pending'), org)
         
         pending_workflows = Workflow.objects.filter(
             organization=org, status='pending'
@@ -886,7 +912,7 @@ class SpendAnalyticsView(generics.GenericAPIView):
         
         # Spend by category
         by_category = []
-        total_spend = sum(s.monthly_cost for s in active_subs)
+        total_spend = monthly_total(active_subs, org)
         
         categories = active_subs.values('vendor__category').annotate(
             count=Count('id')
@@ -894,7 +920,7 @@ class SpendAnalyticsView(generics.GenericAPIView):
         
         for cat in categories:
             cat_subs = active_subs.filter(vendor__category=cat['vendor__category'])
-            cat_spend = sum(s.monthly_cost for s in cat_subs)
+            cat_spend = monthly_total(cat_subs, org)
             by_category.append({
                 'category': cat['vendor__category'] or 'Uncategorized',
                 'spend': cat_spend,
@@ -910,7 +936,7 @@ class SpendAnalyticsView(generics.GenericAPIView):
         
         for dept in departments:
             dept_subs = active_subs.filter(department__name=dept['department__name'])
-            dept_spend = sum(s.monthly_cost for s in dept_subs)
+            dept_spend = monthly_total(dept_subs, org)
             by_department.append({
                 'department': dept['department__name'],
                 'spend': dept_spend,
@@ -951,10 +977,9 @@ class SpendTrendView(generics.GenericAPIView):
         # Get cost records grouped by month
         from_date = timezone.now().date() - timezone.timedelta(days=months * 30)
         
-        records = CostRecord.objects.filter(
-            organization=org,
-            period_start__gte=from_date
-        ).annotate(
+        records = CostRecord.objects.filter(organization=org, period_start__gte=from_date).exclude(source='cost_report')
+        checked_rows(records, org)
+        records = records.annotate(
             month=TruncMonth('period_start')
         ).values('month').annotate(
             total=Sum('amount'),
@@ -970,7 +995,7 @@ class SpendTrendView(generics.GenericAPIView):
 
         if not trend_data:
             active_subs = Subscription.objects.filter(organization=org, status='active')
-            monthly = sum((s.monthly_cost or 0) for s in active_subs)
+            monthly = monthly_total(active_subs, org)
             count = active_subs.count()
             start = timezone.now().date().replace(day=1)
             month_index = start.month - 1 - (months - 1)

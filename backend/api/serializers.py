@@ -6,6 +6,15 @@ from rest_framework import serializers
 class OrganizationModelSerializer(serializers.ModelSerializer):
     """Never resolve a writable foreign key against another organization's data."""
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        request = self.context.get('request')
+        if request and getattr(request.user, 'organization_id', None) and 'currency' in self.fields:
+            from services.money import require_currency
+            current = getattr(self.instance, 'currency', '')
+            attrs['currency'] = require_currency(request.user.organization, attrs.get('currency', current))
+        return attrs
+
     def get_fields(self):
         fields = super().get_fields()
         request = self.context.get('request')

@@ -39,6 +39,18 @@ def coerce_date(value):
 class SubscriptionWriteMixin:
     """Map frontend field names onto the Subscription model."""
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        total = attrs.get('total_licenses', getattr(self.instance, 'total_licenses', 0))
+        used = attrs.get('used_licenses', getattr(self.instance, 'used_licenses', 0))
+        if total < 0 or used < 0 or used > total:
+            raise serializers.ValidationError({'used_licenses': 'Used licenses must be between zero and total licenses.'})
+        if attrs.get('cost_per_unit', 0) < 0:
+            raise serializers.ValidationError({'cost_per_unit': 'Cost cannot be negative.'})
+        if attrs.get('cancellation_notice_days', 0) > 3650:
+            raise serializers.ValidationError({'cancellation_notice_days': 'Notice period cannot exceed 3650 days.'})
+        return attrs
+
     def to_internal_value(self, data):
         payload = data.copy() if hasattr(data, 'copy') else dict(data)
         payload = dict(payload)
@@ -116,6 +128,7 @@ class SubscriptionSerializer(SubscriptionWriteMixin, OrganizationModelSerializer
             'total_licenses', 'used_licenses', 'assigned_licenses', 'unused_licenses',
             'utilization_rate',
             'start_date', 'end_date', 'renewal_date', 'auto_renew', 'days_until_renewal',
+            'cancellation_notice_days', 'cancel_by_date',
             'contract_id', 'contract_document', 'terms',
             'external_id', 'login_url', 'admin_url',
             'tags', 'notes',
@@ -134,7 +147,7 @@ class SubscriptionCreateSerializer(SubscriptionWriteMixin, OrganizationModelSeri
             'owner', 'department', 'team',
             'cost_per_unit', 'currency', 'billing_cycle',
             'total_licenses', 'used_licenses',
-            'start_date', 'end_date', 'renewal_date', 'auto_renew',
+            'start_date', 'end_date', 'renewal_date', 'auto_renew', 'cancellation_notice_days',
             'contract_id', 'contract_document', 'terms',
             'login_url', 'admin_url', 'tags', 'notes'
         ]
@@ -165,7 +178,7 @@ class SubscriptionListSerializer(OrganizationModelSerializer):
             'id', 'name', 'vendor_name', 'vendor_logo', 'status',
             'department_name', 'monthly_cost', 'currency',
             'total_licenses', 'used_licenses', 'assigned_licenses', 'utilization_rate',
-            'renewal_date', 'days_until_renewal', 'is_shadow_it'
+            'renewal_date', 'days_until_renewal', 'is_shadow_it', 'cancellation_notice_days', 'cancel_by_date'
         ]
 
 
@@ -276,6 +289,20 @@ class RecommendationSerializer(OrganizationModelSerializer):
     
     subscription_name = serializers.CharField(source='subscription.name', read_only=True)
     reviewed_by_name = serializers.CharField(source='reviewed_by.full_name', read_only=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get('status') == 'completed' and getattr(self.instance, 'status', None) != 'completed':
+            raise serializers.ValidationError({'status': 'Use Confirm savings to complete a recommendation.'})
+        if self.instance and self.instance.savings_confirmed_at:
+            protected = {'status', 'subscription', 'estimated_savings', 'savings_period', 'currency'}
+            if any(key in attrs and attrs[key] != getattr(self.instance, key) for key in protected):
+                raise serializers.ValidationError('Confirmed savings records cannot be rewritten.')
+        if attrs.get('estimated_savings', 0) < 0:
+            raise serializers.ValidationError({'estimated_savings': 'Savings cannot be negative.'})
+        if attrs.get('savings_period', 'annual') not in ('monthly', 'quarterly', 'annual'):
+            raise serializers.ValidationError({'savings_period': 'Use monthly, quarterly, or annual.'})
+        return attrs
     
     class Meta:
         model = Recommendation
@@ -284,11 +311,27 @@ class RecommendationSerializer(OrganizationModelSerializer):
             'type', 'status', 'priority',
             'title', 'description', 'detailed_analysis',
             'estimated_savings', 'savings_period', 'currency', 'confidence_score',
+            'confirmed_savings', 'savings_effective_date', 'savings_evidence',
+            'savings_confirmed_at', 'savings_confirmed_by',
             'action_items', 'implementation_steps', 'risks',
             'reviewed_by', 'reviewed_by_name', 'reviewed_at', 'review_notes',
             'expires_at', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'reviewed_by', 'reviewed_at',
+                            'confirmed_savings', 'savings_effective_date', 'savings_evidence',
+                            'savings_confirmed_at', 'savings_confirmed_by']
+
+
+class SavingsConfirmationSerializer(serializers.Serializer):
+    confirmed_savings = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'))
+    savings_effective_date = serializers.DateField()
+    savings_evidence = serializers.CharField(max_length=5000, allow_blank=False)
+
+    def validate_savings_effective_date(self, value):
+        from django.utils import timezone
+        if value > timezone.localdate():
+            raise serializers.ValidationError('Confirm savings only after they take effect.')
+        return value
 
 
 class RecommendationActionSerializer(serializers.Serializer):
@@ -405,6 +448,7 @@ class SavingsReportSerializer(OrganizationModelSerializer):
         fields = [
             'id', 'period', 'period_start', 'period_end',
             'total_spend', 'optimized_spend', 'total_savings', 'currency',
+            'monthly_run_rate', 'spend_basis',
             'savings_by_type', 'savings_by_department', 'savings_by_action',
             'subscriptions_analyzed', 'recommendations_generated', 'recommendations_implemented',
             'report_file', 'generated_at', 'generated_by', 'generated_by_name'

@@ -69,15 +69,20 @@ def cleanup_expired_invitations():
     logger.info(f"Marked {count} invitations as expired")
 
 
-@shared_task
-def send_notification_email(notification_id):
+@shared_task(bind=True, max_retries=3)
+def send_notification_email(self, notification_id):
     """Send notification via email"""
     from users.models import Notification
     
     try:
         notification = Notification.objects.select_related('user').get(id=notification_id)
         
-        if not notification.user.email_notifications_enabled:
+        if notification.metadata.get('email_sent_at'):
+            return
+        preferences = notification.user.notification_preferences or {}
+        if not notification.user.is_active or preferences.get('email_enabled', True) is False or preferences.get('renewal_reminders', True) is False:
+            notification.metadata = {**notification.metadata, 'email_skipped': True}
+            notification.save(update_fields=['metadata'])
             return
         
         subject = f"[SWM] {notification.title}"
@@ -90,13 +95,14 @@ def send_notification_email(notification_id):
             fail_silently=False
         )
         
-        notification.email_sent = True
-        notification.save()
+        notification.metadata = {**notification.metadata, 'email_sent_at': timezone.now().isoformat()}
+        notification.save(update_fields=['metadata'])
         
     except Notification.DoesNotExist:
         logger.error(f"Notification {notification_id} not found")
     except Exception as e:
         logger.error(f"Failed to send notification email: {e}")
+        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
 
 @shared_task

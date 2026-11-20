@@ -75,6 +75,21 @@ class Organization(models.Model):
     
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        from django.db import transaction
+        from django.apps import apps
+        from django.core.exceptions import ValidationError
+        from services.money import currency_code
+        self.default_currency = currency_code(self.default_currency)
+        with transaction.atomic():
+            previous = type(self).objects.select_for_update().filter(pk=self.pk).first()
+            if previous and previous.default_currency != self.default_currency:
+                for model in apps.get_app_config('services').get_models():
+                    names = {field.name for field in model._meta.fields}
+                    if {'organization', 'currency'} <= names and model.objects.filter(organization=self).exists():
+                        raise ValidationError({'default_currency': 'Currency is locked once financial records exist. Export and reconcile existing amounts before changing it.'})
+            return super().save(*args, **kwargs)
     
     @property
     def is_on_trial(self):
@@ -245,6 +260,65 @@ class EmailVerification(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
+
+
+class ClosureRequest(models.Model):
+    """A verified, cancellable request; operators record completion evidence."""
+    class Status(models.TextChoices):
+        AWAITING_CONFIRMATION = 'awaiting_confirmation', 'Confirm your email'
+        SCHEDULED = 'scheduled', 'Scheduled for review'
+        PROCESSING = 'processing', 'In progress'
+        BLOCKED = 'blocked', 'Action needed'
+        COMPLETED = 'completed', 'Completed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(Organization, on_delete=models.SET_NULL, null=True, related_name='closure_requests')
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='closure_requests')
+    scope = models.CharField(max_length=20, choices=[('account', 'My account'), ('workspace', 'Entire workspace')])
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.AWAITING_CONFIRMATION)
+    confirmation_hash = models.CharField(max_length=64, blank=True)
+    confirmation_expires_at = models.DateTimeField(null=True, blank=True)
+    confirmation_sent_at = models.DateTimeField(null=True, blank=True)
+    identity_verified_at = models.DateTimeField(null=True, blank=True)
+    identity_email_hash = models.CharField(max_length=64, blank=True)
+    eligible_at = models.DateTimeField(null=True, blank=True)
+    public_notes = models.TextField(blank=True)
+    operator_notes = models.TextField(blank=True)
+    billing_closed_at = models.DateTimeField(null=True, blank=True)
+    billing_reference = models.CharField(max_length=255, blank=True)
+    production_data_deleted_at = models.DateTimeField(null=True, blank=True)
+    data_deletion_reference = models.CharField(max_length=255, blank=True)
+    retention_notes = models.TextField(blank=True)
+    retained_data_expires_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='managed_closures')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.status in ('scheduled', 'processing', 'blocked', 'completed') and not self.identity_verified_at:
+            raise ValidationError('Email confirmation is required before processing.')
+        if self.status == 'completed':
+            required = (self.production_data_deleted_at, self.data_deletion_reference, self.retention_notes)
+            if not all(required):
+                raise ValidationError('Record production-data deletion evidence and the retained-data policy before completing.')
+            if self.scope == 'workspace' and not (self.billing_closed_at and self.billing_reference):
+                raise ValidationError('Record billing cancellation or evidence that no paid subscription exists.')
+            if not self.eligible_at or self.eligible_at > timezone.now():
+                raise ValidationError('The cancellation window has not ended.')
+            if self.organization_id and self.scope == 'workspace':
+                raise ValidationError('Delete the workspace data before recording completion.')
+            if self.requested_by_id and self.scope == 'account':
+                raise ValidationError('Delete the account before recording completion.')
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['requested_by', 'scope'], condition=models.Q(status__in=['awaiting_confirmation', 'scheduled', 'processing', 'blocked']), name='one_open_closure_per_user_scope'),
+            models.UniqueConstraint(fields=['organization'], condition=models.Q(scope='workspace', status__in=['awaiting_confirmation', 'scheduled', 'processing', 'blocked']), name='one_open_workspace_closure'),
+        ]
 
 
 class SocialLoginCode(models.Model):

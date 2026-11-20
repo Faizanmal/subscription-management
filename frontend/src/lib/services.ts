@@ -45,6 +45,8 @@ import type {
   LoginCredentials,
   RegisterData,
   BillingStatus,
+  SavingsConfirmation,
+  ClosureRequest,
 } from '@/types/swm';
 
 // ==================== Auth API ====================
@@ -225,6 +227,7 @@ function toSubscriptionWritePayload(data: Partial<Subscription> & Record<string,
     start_date: toDateOnly(data.start_date),
     end_date: toDateOnly(data.end_date || data.contract_end_date),
     renewal_date: toDateOnly(data.renewal_date),
+    cancellation_notice_days: data.cancellation_notice_days,
     auto_renew: data.auto_renew,
     notes: data.notes,
     tags: data.tags,
@@ -407,6 +410,30 @@ export const redundancyApi = {
 
 // ==================== Recommendations API ====================
 
+function normalizeRecommendation(raw: Recommendation): Recommendation {
+  const dto = raw as Recommendation & { subscription_name?: string; subscription: Subscription | string; reviewed_at?: string };
+  const status = String(raw.status);
+  const period = raw.savings_period || 'annual';
+  return {
+    ...raw,
+    subscription: typeof dto.subscription === 'string' ? { id: dto.subscription, name: dto.subscription_name || '' } as Subscription : dto.subscription,
+    status: (status === 'completed' ? 'implemented' : status === 'rejected' ? 'dismissed' : status) as Recommendation['status'],
+    estimated_savings: Number(raw.estimated_savings || 0),
+    potential_savings: Number(raw.estimated_savings || 0) * (period === 'monthly' ? 12 : period === 'quarterly' ? 4 : 1),
+    confirmed_savings: raw.confirmed_savings == null ? null : Number(raw.confirmed_savings),
+    confidence_score: Number(raw.confidence_score || 0) / 100,
+    implemented_at: raw.savings_confirmed_at,
+  };
+}
+
+export const closureApi = {
+  list: () => api.get<ClosureRequest[]>('/auth/closure-requests/'),
+  create: (data: { scope: 'account' | 'workspace'; confirmation: string }) => api.post<ClosureRequest & { confirmation_email_sent: boolean }>('/auth/closure-requests/', data),
+  confirm: (id: string, token: string) => api.post<ClosureRequest>(`/auth/closure-requests/${id}/confirm/`, { token }),
+  resend: (id: string) => api.post<{ confirmation_email_sent: boolean }>(`/auth/closure-requests/${id}/resend/`),
+  cancel: (id: string) => api.post<ClosureRequest>(`/auth/closure-requests/${id}/cancel/`),
+};
+
 export const recommendationsApi = {
   list: (params?: {
     status?: string;
@@ -414,30 +441,31 @@ export const recommendationsApi = {
     priority?: string;
     subscription?: string;
   }) =>
-    api.get<PaginatedResponse<Recommendation>>('/recommendations/', { params }),
+    api.get<PaginatedResponse<Recommendation>>('/recommendations/', { params: { ...params, status: params?.status === 'implemented' ? 'completed' : params?.status === 'dismissed' ? 'rejected' : params?.status } }).then(data => ({ ...data, results: data.results.map(normalizeRecommendation) })),
 
   get: (id: string) =>
-    api.get<Recommendation>(`/recommendations/${id}/`),
+    api.get<Recommendation>(`/recommendations/${id}/`).then(normalizeRecommendation),
 
   approve: (id: string) =>
-    api.post<Recommendation>(`/recommendations/${id}/approve/`),
+    api.post<Recommendation>(`/recommendations/${id}/approve/`).then(normalizeRecommendation),
 
   dismiss: (id: string, reason: string) =>
     api.post(`/recommendations/${id}/dismiss/`, { reason }),
 
-  implement: (id: string) =>
-    api.post<Recommendation>(`/recommendations/${id}/implement/`),
+  implement: (id: string, data: SavingsConfirmation) =>
+    api.post<Recommendation>(`/recommendations/${id}/implement/`, data).then(normalizeRecommendation),
 
   generate: () =>
     api.post<{ task_id: string }>('/recommendations/generate/'),
 
   getQuickWins: (limit?: number) =>
-    api.get<Recommendation[]>('/recommendations/quick-wins/', { params: { limit } }),
+    api.get<Recommendation[]>('/recommendations/quick-wins/', { params: { limit } }).then(data => data.map(normalizeRecommendation)),
 
   getSavingsSummary: () =>
     api.get<{
       total_potential: number;
       implemented: number;
+      currency: string;
       by_type: { type: string; count: number; savings: number }[];
     }>('/recommendations/savings-summary/'),
 };

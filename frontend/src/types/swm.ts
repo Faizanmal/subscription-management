@@ -166,6 +166,8 @@ export interface Subscription {
   start_date: string;
   end_date?: string;
   renewal_date?: string;
+  cancellation_notice_days?: number;
+  cancel_by_date?: string;
   cancellation_date?: string;
   contract_end_date?: string;
   auto_renew: boolean;
@@ -285,6 +287,12 @@ export interface Recommendation {
   impact_summary?: string;
   estimated_savings: number;
   potential_savings: number;
+  currency: string;
+  savings_period: 'monthly' | 'quarterly' | 'annual';
+  confirmed_savings?: number | null;
+  savings_effective_date?: string;
+  savings_evidence?: string;
+  savings_confirmed_at?: string;
   implementation_steps: string[];
   priority: RecommendationPriority;
   status: RecommendationStatus;
@@ -296,6 +304,25 @@ export interface Recommendation {
   dismissed_reason?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface SavingsConfirmation {
+  confirmed_savings: string;
+  savings_effective_date: string;
+  savings_evidence: string;
+}
+
+export interface ClosureRequest {
+  id: string;
+  scope: 'account' | 'workspace';
+  status: 'awaiting_confirmation' | 'scheduled' | 'processing' | 'blocked' | 'completed' | 'cancelled';
+  identity_verified_at?: string;
+  eligible_at?: string;
+  public_notes: string;
+  retention_notes: string;
+  retained_data_expires_at?: string;
+  completed_at?: string;
+  created_at: string;
 }
 
 export type RecommendationType = 
